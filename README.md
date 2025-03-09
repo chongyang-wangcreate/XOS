@@ -1,4 +1,3 @@
-# XOS
 My Personal OS Project
 Introduction
 This project represents the culmination of my passion for Operating Systems (OS) and the desire to truly understand how an OS works from the ground up. The main motivation behind creating my own OS was the realization that there are very few small and accessible OS options available to learn and experiment with. While exploring and understanding how an OS operates has always fascinated me, I also wanted to make it easier for others to dive into the world of OS development. My goal is for this project to be a resource that can help anyone interested in understanding OS principles.
