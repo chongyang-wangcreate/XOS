@@ -262,20 +262,6 @@ ret_from_fork:
 	blr x19
 	ret
 
-/*
-	什么情况下才会调用ret_to_user 只有在 用户态发生 异常，陷阱，系统调用，内核函数执行完毕之后退出内核态返回
-	用户态时才会调用ret_to_user, 如果被ret_form_fork 第一次调用
-
-	linux 实现方法
-	get_thread_info tsk  将child->cpu_context.sp = (unsigned long)child_ptregs;   放入寄存器x28
-	
-	ret_to_user的第一句就是disable_daif， daif是ARM64 PSTATE代表当前处理器状态的，disable_daif则就会关闭DAIF各个位，D(debug)A(Serror)I(IRQ)F(FIQ)
-	ldr    x1, [tsk, #TSK_TI_FLAGS]， 将thread_info.flags的值赋值给X1
-	and    x2, x1, #_TIF_WORK_MASK， 将X1的值和_TIF_WORK_MASK的值或，_TIF_WORK_MASK是一个宏，里面包含了很多字段，比如是否需要调度字段_TIF_NEED_RESCHED等
-	cbnz    x2, work_pending 当X2的值不等于0时，则跳转到work_pending做一个慢速的ret过程，在do_notify_resume中检查是否要对pending的任务做进一步的操作
-	然后调用kernel_exit 0返回到用户空间
-
-*/
 
 ret_to_user:
 	bl xos_disable_irq
