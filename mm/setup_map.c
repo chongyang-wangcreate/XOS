@@ -46,7 +46,6 @@
 #define PMD_SIZE        (1<<PMD_OFFSET)
 #define PMDIR_MASK      (~(PMD_SIZE-1))
 #define PAGE_SIZE       (1<< 12)
-//#define PGD_ENTRY_NUMS		512
 #define PTE_ADDR_MASK (~((1UL << PAGE_SHIFT) - 1))
 
 
@@ -96,7 +95,6 @@ int pte_map(pmd_t *pmd_p, u64 vaddr, u64 end, u64 paddr, u64 attr)
         virt_pte_next = virt_pte_next < end ? virt_pte_next : end;
         
         *pte = ((paddr >> PAGE_SHIFT) << PAGE_SHIFT) |PT_ENTRY_TABLE | PT_ENTRY_VALID | attr ;
-//        *pte = pa | ACCESS_FLAG | SH_IN_SH | ap | NON_SECURE_PA | PT_ATTRINDX(MT_NORMAL) | PT_ENTRY_PAGE | PT_ENTRY_VALID;
         paddr += virt_pte_next - vaddr;
         vaddr = virt_pte_next;
     }
@@ -251,10 +249,7 @@ pmd_t* get_pmd(pgd_t *pgdir, void *va)
     int pgdidx;
     uint64	*level2;
     uint64 virt = (uint64)va;
-    /*
-        当前函数写的存在问题，只能在特定条件下使用
-        pgdidx 范围0-7 之间，这个函数是在没有实现内存管理之前实现的
-    */
+
     pgdidx = PGD_IDX(virt); 
    
     
@@ -350,8 +345,7 @@ int find_pte_phy(pgd_t *pgdir, void *va,uint64 *phy_addr)
 
 /*
     20240302 我们当前需要创建三级页表，三级足够了
-    20250114 在实现fork 时候发现这个函数需要改造一下，父子进程pte 拷贝时，需要这个函数返回一个Pte 值
-    不同的vma 有不同的属性
+    
 */
 
 int xos_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot)
@@ -421,10 +415,7 @@ int xos_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint
 
 }
 
-/*
-    子进程pud pmd 页表要独立创建，赋值关联
-    pte 特殊处理
-*/
+
 int xos_3level_one_pagemap (pgd_t *pgdir, void *va,  unsigned long pa, uint64 prot)
 {
     char *start;

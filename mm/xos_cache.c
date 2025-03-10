@@ -68,8 +68,6 @@ cache 内存管理子系统，管理小块内存
 需要进一步更改设计
 
 
-
-
 2024.11.29：
     当前的 2024 年4月份设计cache 管理有必要优化进行优化,也存在相应的问题,最大的问题是cache 管理头和分配的
     数据块相连，后续cache 需要单独内存管理空间，必须和分配的内存块分离。
@@ -177,16 +175,7 @@ static void* __mem_cache_alloc(cache_block_t *cache_block)
     int block_index = 0;
     void *alloc_addr;
     arch_local_irq_disable();
-    /*
-        判断是否存在满足当前尺寸的空闲块
-        如果存在则从从池中申请内存块，管理内存块数据结构
-        mem_obj_t 
-        查看free_list 链表是否非空如果空，检测partial_list 
-        如果链表还是不存在节点，证明当前没有可用的内存块
-        那么只能先向系统申请，然后将申请成功的内存块加入到当前mem_obj_t
-        然后挂到free_list 中，再申请一块一个的内存块，申请之后需要从free_list
-        脱链，脱链直接加入partial_list
-    */
+
     if(list_is_empty(&cache_block->free_list)){
         if(list_is_empty(&cache_block->partial_list)){
             /*
@@ -296,19 +285,7 @@ void *mem_cache_alloc(int size)
 {
     void *mem_ptr;
     cache_block_t *local_cache_block;
-    /*
-        根据size 大小选择适合的mem_block
-        size 大小可能超出我管理内存的大小，直接向系统申请(malloc)
 
-        问题来了，如何根据size 大小选择合适的i 值
-        停顿思考的主要原因在32           64  128  256
-        如果size = 32 那么i 选择=0 还是1 合适，64 也是同样的问题
-        所以还需要增加奇偶判断，如果当前是size 是2的次幂，则
-        size >> 5 -1
-        如何判断是否是2的次幂
-        (size >> 5)<<5 == size 
-        mem_set[i]
-    */
     if(size > mem_size_set[6].cache_bsize){
 
         mem_ptr = xos_get_free_page(0, 0);

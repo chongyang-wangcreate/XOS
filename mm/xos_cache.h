@@ -1,9 +1,7 @@
 #ifndef __XOS_CACHE_H__
 #define __XOS_CACHE_H__
 
-/*
-    对于每个cache 对象的描述
-*/
+
 typedef struct cache_obj{
     dlist_t free_list;
     dlist_t use_list;
