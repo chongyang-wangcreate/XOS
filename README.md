@@ -1,72 +1,103 @@
-My Personal OS Project
-Introduction
-This project represents the culmination of my passion for Operating Systems (OS) and the desire to truly understand how an OS works from the ground up. The main motivation behind creating my own OS was the realization that there are very few small and accessible OS options available to learn and experiment with. While exploring and understanding how an OS operates has always fascinated me, I also wanted to make it easier for others to dive into the world of OS development. My goal is for this project to be a resource that can help anyone interested in understanding OS principles.
+XOS - Personal Operating System Project
 
+XOS is a lightweight, educational operating system project created to help developers and students gain hands-on experience and better understand the inner workings of operating systems. It serves as a resource for anyone interested in OS principles and development, with a focus on simplicity, modularity, and extensive documentation.
 Motivation
-I initially started this OS project simply out of love for OS development and a desire to understand its inner workings. However, as I continued, I felt a sense of purpose and mission — this project had to be completed! Despite having limited time (I could only work on it during weekends, nights, and holidays), I was determined to make this OS a reality. The journey has been long, and the project took a total of 1 year and 5 months to complete. Every spare moment was dedicated to it, and I went "all-in" on this endeavor, pushing through late nights (the latest being 4 AM) and weekends.
 
-The project has been a combination of passion, perseverance, and dedication, which has proven to be the key to success. Through this journey, I have learned the importance of focus, commitment, and patience when pursuing any goal.
+This project represents the culmination of my passion for operating systems and the desire to understand how an OS works from the ground up. The main motivation behind creating XOS was the realization that there are few small, accessible OS options available for learning and experimentation. While I have always been fascinated by how operating systems operate, I also wanted to make it easier for others to dive into the world of OS development.
 
+I started this project out of sheer interest and love for OS development. However, over time, the project became a mission — it had to be completed! Despite having limited time, I worked on it primarily during weekends, nights, and holidays. It took a total of 1 year and 5 months to finish. The journey involved late nights (often until 4 AM) and weekends, but my passion, perseverance, and dedication drove me to push forward, learning valuable lessons along the way about focus, commitment, and patience.
 Development Process
 Time Commitment
-Due to my limited time, I could only work on the OS during weekends, holidays, and after work. This led to a development period of 1 year and 5 months. Despite the long duration, I have been fully committed, putting in as much time as possible during my free hours.
 
-Key Principles: Passion, Interest, and Perseverance
-The driving forces behind this project were my passion for OS development and my unwavering interest in how operating systems function. Perseverance played a huge role — even when the project seemed difficult and time-consuming, I kept pushing forward with the understanding that the key to completing any long-term project is resilience.
+Due to time constraints, I could only dedicate limited hours to this project, working on it after work, on weekends, and during holidays. Despite the long development period, I was fully committed to completing the OS, using every available moment to push the project forward.
+Key Principles: Passion, Perseverance, and Learning
 
+This project was driven by my passion for operating systems and my deep interest in how they function. Even when faced with challenges, perseverance was essential. I learned that resilience is key to completing long-term projects — it’s not always easy, but it’s worth it.
 Features
-Lightweight Design: My OS is designed to be small, lightweight, and easy to understand. It's intended as a learning tool for others interested in operating systems.
-Extensive Comments: The code is thoroughly commented to help others follow along with the development process and learn from it.
-Modularity: The OS is structured in a modular way so that new components and features can easily be added in the future.
-To set up and run your OS project, follow these steps:
-Compilation:
 
-To compile the operating system, you need to have a cross-compiler and a proper build environment in place. Once ready, you can compile the OS using the following command:
+    Lightweight Design: XOS is designed to be small, lightweight, and easy to understand. It's intended as a learning tool for anyone interested in operating systems.
+    Extensive Comments: The code is heavily commented to provide insights into the development process, making it easier for others to follow along and learn.
+    Modular Architecture: XOS is structured to allow easy addition of new features and components in the future.
+
+Installation and Setup
+
+To build and run XOS, follow the steps below.
+Prerequisites:
+
+    QEMU: An emulator for ARM64 architecture.
+    Build Tools: Ensure you have make and other necessary build tools installed.
+
+1. Install QEMU for ARM64
+
+First, you need to install QEMU to emulate ARM64 architecture. You can install QEMU using the following commands based on your system:
+On Ubuntu/Debian:
 
 bash
-./build_script/build.sh make
+sudo apt update
+sudo apt install qemu qemu-system-arm
 
-This command will compile the necessary source files and generate the bootable image for the OS.
-Running the OS:
-
-You can run the OS either on a virtual machine or in a simulator like QEMU. To boot the OS in QEMU, run the following command:
+On macOS (using Homebrew):
 
 bash
-./build_script/run_os.sh run
+brew install qemu
 
-This will load the compiled kernel image and start the OS.
+2. Build XOS
 
-From here, you can set breakpoints, inspect memory, and step through the code line by line to troubleshoot and understand the behavior of the OS.
+Once you have QEMU installed, you can compile the XOS kernel using the provided build script.
 
-Future Goals
-Though the OS is functional, I have plans to continue improving it and adding more advanced features, such as:
+bash
+./build.sh make
 
-Process management (multitasking)
-Support multi-core 
-Multi priority scheduling and fair scheduling
-Better memory management 
-Device driver support
-More file system support
-Networking support
+This will compile the source code and generate the necessary files to run XOS.
+3. Run XOS
+
+After the build process completes successfully, you can run the operating system using QEMU with the following command:
+
+bash
+./run.sh run
+
+This will start QEMU and launch XOS in the ARM64 emulation environment.
+
+Although XOS is functional, I have several plans for future improvements and features, including:
+
+    Process Management: Implementing multitasking and process scheduling.
+    Multi-core Support: Enabling support for multi-core processors.
+    Advanced Scheduling: Implementing priority scheduling and fair scheduling algorithms.
+    Memory Management: Further improving memory management techniques.
+    Device Driver Support: Adding support for more hardware devices.
+    File System Improvements: Expanding file system functionality.
+    Networking Support: Adding networking capabilities.
+
 Contribution
-If you are interested in contributing to the project or learning more, feel free to open issues, submit pull requests, or check out the codebase.
 
+We welcome contributions to the project! If you're interested in contributing, here’s how you can get started:
+
+    Fork the repository: Create your own fork of the project.
+    Create a new branch:
+
+    bash
+    git checkout -b feature/your-feature
+
+    Commit your changes:
+
+    bash
+    git commit -am 'Add new feature'
+
+    Push your branch:
+
+    bash
+    git push origin feature/your-feature
+
+    Create a Pull Request: Open a pull request with a description of the changes.
+
+Please ensure that your code follows the project’s coding style and contribution guidelines. This helps maintain consistency and quality.
 Conclusion
-This personal OS project has been an incredible journey of learning, dedication, and passion. Although it took over a year to complete, the experience has been invaluable. My hope is that others can use this project to better understand operating system concepts and gain hands-on experience in OS development. This project demonstrates that with the right motivation, commitment, and passion, it's possible to achieve great things even with limited time and resources.
 
+This personal OS project has been an incredible journey of learning, dedication, and passion. Though it took over a year to complete, the experience has been invaluable. My hope is that others can use this project to better understand operating system concepts and gain hands-on experience in OS development. This project demonstrates that with the right motivation, commitment, and passion, it's possible to achieve great things even with limited time and resources.
+Contact
 
+If you have any questions, suggestions, or feedback, feel free to contact us. You can also open issues or submit pull requests to help improve this project!
 
-contribution 
-We welcome anyone to join this project! If you are interested, please follow these steps: 
-Fork's own warehouse 
-Create your own branch: git checkout -b feature/your-feature 
-Submit changes: git commit -am 'Add new feature' 
-Push branch: git push origin feature/your-feature 
-Create Pull Request 
-Please follow our code style and contribution guidelines to ensure consistency and high quality of the project. 
-Looking forward to your feedback and joining us 
-We eagerly await your feedback and hope that you can join our development team to learn and grow together, and jointly promote the development and improvement of the operating system!
-
-If you have any questions or suggestions, please contact us through the following methods:
+Looking forward to seeing your contributions and having you join the development journey!
 
 email:rockywang599@gmail.com
