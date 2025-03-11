@@ -65,25 +65,7 @@ typedef struct cache_obj{
 */
 
 
-/*
-    cache_block_t 结构和mem_obj_t 结构通过free_list , partial_list
 
-    full_list 三个链表相关联
-    引入三个链表模仿了linux ,
-    当前结构对于mem_obj_t 来说是个总的管理块(或者管理头，需要描述mem_obj_t 重要信息)
-    mem_obj_t 的初始化数据来自mem_block_t 头数据
-
-    为何这么定义呢
-    我定义的mem_obj_t 挂在那个链表上
-    我定义的mem_obj_t 管理的内存块每块多大首先肯定是mem_block_t 要指定所以必须定义obj_block_size 来表示
-    我定义的mem_obj_t 管理的内存块到底有多少块mem_block_t 结构中肯定要描述
-
-    mem_block_t 是来管理mem_obj_t 
-
-    引入链表多重作用，一个链表可以挂多个节点，每个节点都是一个内存管理模块
-    这样我可以将一个大的内存块拆分成多个节点，每个节点内存数量减少
-    遍历整个内存块区域会很快
-*/
 typedef struct cache_block_st{
 	struct list_head free_list;
 	struct list_head partial_list;
