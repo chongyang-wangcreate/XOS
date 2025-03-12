@@ -3,25 +3,25 @@ SECTIONS{
 		.user_text : { PROVIDE(user_text_start = .);
 		output/usr/*(.text)
 		PROVIDE(user_text_end = ALIGN(PAGE_SIZE));
-		. = user_text_end; } >user_vma AT>user_pma
+		. = user_text_end; } >user_vma AT>user_lma
 		PROVIDE (_user_text_saddr = KERNEL_START + user_text_start);
 		PROVIDE (_user_text_eaddr = KERNEL_START + user_text_end);
 	    .user_rodata : { PROVIDE(user_rodata_start = .);
 		output/usr/*(.rodata)
 		PROVIDE(user_rodata_end = ALIGN(PAGE_SIZE));
-		. = user_rodata_end; } >user_vma AT>user_pma
+		. = user_rodata_end; } >user_vma AT>user_lma
 		PROVIDE (_user_rodata_saddr = KERNEL_START + user_rodata_start);
 		PROVIDE (_user_rodata_eaddr = KERNEL_START + user_rodata_end);
 	.user_data : { PROVIDE(user_data_start = .);
 		output/usr/*(.data)
 		PROVIDE(user_data_end = ALIGN(PAGE_SIZE));
-		. = user_data_end; } >user_vma AT>user_pma
+		. = user_data_end; } >user_vma AT>user_lma
 		PROVIDE (_user_data_saddr = KERNEL_START + user_data_start);
 		PROVIDE (_user_data_eaddr = KERNEL_START + user_data_end);
 	.user_bss : { PROVIDE(user_bss_start = .);
 		output/usr/*(.bss)
 		PROVIDE(user_bss_end = ALIGN(PAGE_SIZE));
-		. = user_bss_end; } >user_vma AT>user_pma
+		. = user_bss_end; } >user_vma AT>user_lma
 		PROVIDE (_user_bss_saddr = KERNEL_START + user_bss_start);
 		PROVIDE (_user_bss_eaddr = KERNEL_START + user_bss_end);
 

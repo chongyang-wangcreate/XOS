@@ -71,7 +71,7 @@ extern void add_to_cpu_runqueue(int cpuid,struct task_struct *task);
 #define GET_PHY_OFF(vstart ,vbase) ((uint64)(vstart) - (uint64)(vbase))
 #define GET_PHY_START(pstart,vstart,vbase) (pstart + GET_PHY_OFF(vstart,vbase))
 
-extern uint64 _user_pma[];
+extern uint64 _user_lma[];
 extern uint64 _user_vma[];
 
 
@@ -402,7 +402,7 @@ int create_process_vma(struct task_struct *cur_task)
     uint64 user_bss_start;
     uint64 user_bss_end;
 
-    user_pma_start = V_TO_P(_user_pma);
+    user_pma_start = V_TO_P(_user_lma);
     user_vma = V_TO_P(_user_vma);
     printk(PT_RUN,"lma_user=%p\n", user_pma_start);
     printk(PT_RUN,"vma_user=%p\n", user_vma);

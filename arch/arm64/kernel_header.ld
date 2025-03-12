@@ -24,9 +24,9 @@ MEMORY
 	user_vma : ORIGIN = USER_VADDR_START, LENGTH = USER_VRANGE_SIZE
 	phy_addr_boot : ORIGIN = LOAD_ADDR_START, LENGTH = 256K
 	phy_addr_kernel : ORIGIN = 0x40030000, LENGTH = 40960K
-	user_pma : ORIGIN = ORIGIN(phy_addr_kernel) + LENGTH(phy_addr_kernel), LENGTH = LENGTH(user_vma)
+	user_lma : ORIGIN = ORIGIN(phy_addr_kernel) + LENGTH(phy_addr_kernel), LENGTH = LENGTH(user_vma)
 	vma_kernel_mapping : ORIGIN = KERNEL_START + ORIGIN(phy_addr_kernel), LENGTH = 40960K
 }
 
-PROVIDE (_user_pma = KERNEL_START + ORIGIN(user_pma));
+PROVIDE (_user_lma = KERNEL_START + ORIGIN(user_lma));
 PROVIDE (_user_vma = KERNEL_START + ORIGIN(user_vma));
