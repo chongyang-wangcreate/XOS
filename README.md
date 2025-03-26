@@ -1,4 +1,4 @@
-XOS - Personal Operating System Project
+XOS :
 
 XOS is a lightweight, educational operating system project created to help developers and students gain hands-on experience and better understand the inner workings of operating systems. It serves as a resource for anyone interested in OS principles and development, with a focus on simplicity, modularity, and extensive documentation.
 Motivation
