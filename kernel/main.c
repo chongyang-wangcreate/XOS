@@ -157,9 +157,6 @@ void kernel_init (void)
 {
     clear_kbss();
     xos_uart_init();
-
-    xos_zone_init();
-    mem_cache_init();
     /*
         to do 
         printk_debug(){level = PT_DEBUG};
@@ -168,7 +165,8 @@ void kernel_init (void)
     printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
 
     all_phys_linear_map();
-    
+    xos_zone_init();
+    mem_cache_init();
     test_buddy();
     
     printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
