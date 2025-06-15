@@ -138,7 +138,9 @@ void start_init(char *array)
 #ifndef CONFIG_DEV
      xos_init_deivices(); 
 #endif
-
+#ifdef CONFIG_SMP
+    start_other_cores();
+#endif
     process_create();
     while(1)
     {
@@ -167,6 +169,7 @@ void kernel_init (void)
     all_phys_linear_map();
     xos_zone_init();
     mem_cache_init();
+    mark_slave_core();
     test_buddy();
     
     printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);

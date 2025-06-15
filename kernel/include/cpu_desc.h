@@ -90,6 +90,17 @@ typedef struct struct_cpu_desc{
 extern cpu_desc_t cpu_array[CPU_NR];
 extern void cpu_desc_init();
 
+/*
+    cpu setting function set
+*/
+
+extern void mark_slave_core();
+extern int start_other_cores();
+
+
+extern void mark_cpu_bit_present(unsigned int cpu_id,bool value);
+extern void mark_cpu_bit_online(unsigned int cpu_id,bool value);
+extern bool cpu_is_present(unsigned int cpu_id);
 
 
 #endif

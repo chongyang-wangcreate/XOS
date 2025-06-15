@@ -44,6 +44,7 @@ uint64 boot_mem_end  = 0;
 extern void boot_puts (char *s);
 
 
+char slave_boot_stacks[CPU_NR][PAGE_SIZE] = {0};
 
 
 void boot_mem_init()

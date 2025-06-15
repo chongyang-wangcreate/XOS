@@ -35,6 +35,13 @@
 #include "spinlock.h"
 
 cpu_desc_t cpu_array[CPU_NR];
+/*
+    bit:0--15  cpu present
+    bit:16-31  cpu online
+*/
+unsigned long cpu_flags = 0;
+
+
 
 /*
     0 比较特殊
@@ -87,7 +94,9 @@ void cpu_desc_init()
         cpu_array[i].run_bitmap.btmp_bytes_len = 32;//32个bit
 
     }
-    
+    /*
+        给从核idle 任务创建堆栈空间
+    */
 
 }
 
@@ -145,3 +154,73 @@ void new_add_to_cpu_runqueue(struct task_struct *task){
 
 }
 
+
+void mark_slave_core()
+{
+    int i;
+    for(i = 1;i < CPU_NR;i++){
+        mark_cpu_bit_present(i, 1);
+    }
+}
+
+int psci_cpu_on(unsigned int cpu_id)
+{
+    if(cpu_id <= 0){
+        return -1;
+    }
+    __invoke_psci_fn(cpu_id);;
+}
+
+/*
+    slave cpu core relation
+*/
+
+int slave_core_start(unsigned int cpu_id)
+{
+    /*
+        Check if the current core is online,
+        only activate the online slave cores
+    */
+    if(cpu_is_present(cpu_id)){
+        psci_cpu_on(cpu_id);
+    }
+}
+
+int start_other_cores()
+{
+    int i;
+    for(i = 1; i < CPU_NR;i++){
+        slave_core_start(i);
+    }
+}
+
+unsigned long get_cpu_flags()
+{
+    return cpu_flags;
+}
+/*
+    The purpose of adding marks is to enable us to control the CPU,
+    such as controlling the mem-block range
+*/
+void mark_cpu_bit_present(unsigned int cpu_id,bool value)
+{
+    if(value == 1){
+        cpu_flags |= (1 << cpu_id);
+    }else{
+        cpu_flags &= ~(1 << cpu_id); 
+    }
+}
+
+void mark_cpu_bit_online(unsigned int cpu_id,bool value)
+{
+    if(value == 1){
+        cpu_flags |= (1 << (16+cpu_id));
+    }else{
+        cpu_flags &= ~(1 << (16+cpu_id)); 
+    }
+}
+
+bool cpu_is_present(unsigned int cpu_id)
+{
+    return (cpu_flags &(1 << cpu_id))
+}

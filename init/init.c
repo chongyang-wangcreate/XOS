@@ -89,7 +89,7 @@ void other_boot_main()
         to do
         config ttbr0  ttbr1
         enable mmu
-        loop  wait psci
+        create idle task
 
         
     */
