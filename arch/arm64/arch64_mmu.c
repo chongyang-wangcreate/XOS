@@ -253,9 +253,6 @@ void config_mmu_regs (uint64* kern_pgtbl, uint64* user_pgtbl)
 
     set_flush_invalid_icache();
 
-    set_flush_invalid_tlb();
-
-    asm volatile("dsb sy" : : :);
 
   /* no trapping on FP/SIMD instructions
       linux operation 
@@ -278,7 +275,9 @@ void config_mmu_regs (uint64* kern_pgtbl, uint64* user_pgtbl)
     set_ttbr1_el1((uint64)kern_pgtbl);
     boot_puts("set (TTBR0_EL1)...\n");
     set_ttbr0_el1((uint64)user_pgtbl);
-
+	asm volatile("dsb sy": : :);
+    set_flush_invalid_tlb();
+	
     boot_puts("set sctlr_el1...\n");
     set_sctlr_el1();
     boot_puts("mmu completed...\n");
