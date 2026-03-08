@@ -234,10 +234,10 @@ el1_irq:
 .align 6
 el0_sync:
 	save_cur_regs 0
-	xos_enable_irq
 	mov x0, sp 
 	mrs x1, far_el1
 	mrs x2, esr_el1
+    xos_enable_irq
 	bl do_el0_sync   
 	#返回用户态之前检测是否需要抢占，后续会添加上，现在没考虑那么多
 	#b ret_to_user
