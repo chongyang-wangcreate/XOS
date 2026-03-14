@@ -3,6 +3,13 @@
 
 #define MAX_ARG_NR 10
 #define MAX_BUF_SIZE 128
+#define PROMPT_SIZE 32
+
+#define MAX_HS_NR   20
+#define MAX_INPUT_LENGTH  128
+#define KEY_UP      0x41    /* 'A' */
+#define KEY_DOWN    0x42    /* 'B' */
+#define ESC         27      /* 0x1B */
 
 enum{
     DEL_FRONT,
@@ -13,7 +20,7 @@ enum{
 
 typedef struct shell_history{
     
-    char *history[MAX_ARG_NR];
+    char history[MAX_HS_NR][MAX_INPUT_LENGTH];
 
 }sh_his_msg;
 typedef struct shell_cmd_parse{
@@ -22,6 +29,7 @@ typedef struct shell_cmd_parse{
     int cur_cursor; //当前光标位置
     char *argv[MAX_ARG_NR]; //支持最大输入参数分量
     char input_buf[MAX_BUF_SIZE];
+    char prompt[PROMPT_SIZE];
     int  input_buf_size;
     int  argc;
 
@@ -64,6 +72,9 @@ extern int left_key_handle_cursor(sh_desc_t *shell);
 extern int right_key_handle_cursor(sh_desc_t *shell);
 extern void shell_del_char(sh_desc_t *shell,int direction);
 extern void parse_input_cmd(sh_desc_t *shell);
+extern void reset_shell_param(sh_desc_t *shell);
+
+extern int shell_insert_char(sh_desc_t *shell,char in_char);
 
 
 

@@ -40,6 +40,7 @@
     and further feature additions and optimizations will be made in the future.
 
 */
+
 sh_desc_t  cmd_shell;
 extern void* user_memset(void *dst, int v, int n);
 extern int print_char(char c);
@@ -189,17 +190,21 @@ void shell_write_char(sh_desc_t *shell,char in_char)
 
 
 
+
+      
+     
 int shell_handle_read_char(sh_desc_t *shell,char in_char)
 {
+    
     int ret = 0;
     int kflags = 0;
     u_dlist_t *sh_tmp;
     u_dlist_t *sh_cmd_list = &shell->sh_cmd.sh_key_list_head;
     xos_sh_cmd *kcmd_shell;
-//   printf("%s:%d,in_char=%d,in_char=%d\n\r",__FUNCTION__,__LINE__,in_char,(int)in_char);
     /*
         特殊字符直接处理
     */
+
     if((int)in_char == 27){
         kflags = 1;
         shell->sp_cmd.tmp_buf[shell->sp_cmd.global_idx] = in_char;
@@ -227,19 +232,14 @@ int shell_handle_read_char(sh_desc_t *shell,char in_char)
         if(kcmd_shell->ascii_code == (int)in_char){
             ret = kcmd_shell->kcmd_fun(shell);
             kflags = 1;
-            if(kcmd_shell->ascii_code == 13){
-                
-                //printf("\n");
-            }
-//          printf("%s:%d,ret=%d\n\r",__FUNCTION__,__LINE__,ret);
             return ret;
         }
     }
     /*
         普通字符加入队列
     */
-    if(kflags == 0){
-        
+    if(kflags == 0)
+    {        
         ret = shell_insert_char(shell,in_char);
         if(ret < 0){
             return INSER_END;
@@ -385,8 +385,6 @@ void shell_del_char(sh_desc_t *shell,int direction)
 
   }
 }
-
-
 
 /*
     refactoring   parse_insert_cmd

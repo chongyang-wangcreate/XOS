@@ -357,9 +357,15 @@ void reset_shell_param(sh_desc_t *shell)
     }
     本地版本管理不容易追踪问题
 */
+int history_write_idx = 0;    
+int history_browse_idx = 0;   
+int signle_count = 0;
 int enter_key_handle(sh_desc_t *shell)
 {
 
+    usr_strcpy(shell->history.history[history_write_idx], shell->parse_cmd.input_buf);
+    history_write_idx = (history_write_idx + 1) % 20;
+    history_browse_idx = 0;
     printf("\n");
     parse_input_cmd(shell);
     if(shell->parse_cmd.argv[0] == NULL){
@@ -380,6 +386,7 @@ int left_key_handle_cursor(sh_desc_t *shell)
     return 0;
 }
 
+
 int right_key_handle_cursor(sh_desc_t *shell)
 {
     int cur_cursor;
@@ -393,6 +400,68 @@ int right_key_handle_cursor(sh_desc_t *shell)
 }
 
 
+void com_history_handle(sh_desc_t *shell,int his_id)
+{
+    int i;
+    for(i = 0; i < usr_strlen(shell->parse_cmd.input_buf);i++)
+    {
+        shell_write_char(shell,'\b'); /*退格*/
+        shell_write_char(shell,' '); /*清成空格*/
+        shell_write_char(shell,'\b');/*退格*/
+    }
+    reset_shell_param(shell);
+    usr_strcpy(shell->parse_cmd.input_buf,shell->history.history[his_id]);
+    for(i = 0; i < usr_strlen(shell->parse_cmd.input_buf);i++){
+        shell_insert_char(shell, shell->parse_cmd.input_buf[i]);
+        //printf("%s:%d,shell->parse_cmd.input_buf[i]=%c\n\r",__FUNCTION__,__LINE__,shell->parse_cmd.input_buf[i]);
+
+    }
+
+}
+
+int up_key_handle(sh_desc_t *shell)
+{
+    int hist_idx;
+    hist_idx = (history_write_idx - 1 - history_browse_idx + 20) % 20;
+    //printf("%s:%d,hist_idx=%d\n\r",__FUNCTION__,__LINE__,hist_idx);
+    if(shell->history.history[hist_idx][0] != '\0' && history_browse_idx < 20)
+    {
+        com_history_handle(shell,hist_idx);
+        history_browse_idx++;
+    }
+    return 0;
+}
+
+int down_key_handle(sh_desc_t *shell)
+{
+    int i = 0;
+    int hist_idx;
+    if(history_browse_idx > 0)
+    {
+        history_browse_idx--;
+        hist_idx = (history_write_idx - 1 - history_browse_idx +20)%20;
+        if(shell->history.history[hist_idx][0] != '\0' && history_browse_idx < 20)
+        {
+            com_history_handle(shell,hist_idx);
+        }
+        signle_count = 0;
+
+    }else if(history_browse_idx == 0 &&(signle_count == 0))
+    {
+        signle_count = 1;
+        for(i = 0; i < usr_strlen(shell->parse_cmd.input_buf);i++){
+            shell_write_char(shell,'\b'); /*退格*/
+            shell_write_char(shell,' '); /*清成空格*/
+            shell_write_char(shell,'\b');/*退格*/
+        }
+        reset_shell_param(shell);
+        
+    }
+    return 0;
+}
+
+
+
 /*
     shell 功能还存在问题，还需要处理某些特殊字符的bug
 */
@@ -404,8 +473,8 @@ void spcial_key_cmd_init()
     xos_shell_kmd_register(13,  enter_key_handle,       NULL,NULL,"enter");
     xos_shell_kmd_register(68,  left_key_handle_cursor, NULL,NULL,"left");  
     xos_shell_kmd_register(67,  right_key_handle_cursor,NULL,NULL,"right"); 
-    
-
+    xos_shell_kmd_register(65,  up_key_handle,NULL,NULL,"up"); 
+    xos_shell_kmd_register(66,  down_key_handle,NULL,NULL,"down"); 
 
 }
 
