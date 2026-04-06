@@ -34,6 +34,7 @@
 #include "printk.h"
 #include "xos_zone.h"
 #include "spinlock.h"
+#include "uart.h"
 
 #define NORMAL_PAGE_SIZE (1 << 12)
 
@@ -230,6 +231,7 @@ xos_page_t *xos_get_page(xos_zone_t *zone,int order)
     */
     return xos_split_page(zone ,tmp_page,org_order,high_order); 
 }
+
 int xos_insert_to_buddy(xos_zone_t *zone)
 {
     int32_t i = 0;
@@ -244,7 +246,7 @@ int xos_insert_to_buddy(xos_zone_t *zone)
         遍历每一个页帧，如果当前页帧空闲，将页帧加入buddy 子系统
     */
 //  max_pfn_cnt = (zone->z_pfn_cnt < zone->z_vm_cnt)?zone->z_pfn_cnt:zone->z_vm_cnt;
-    printk(PT_DEBUG,"%s:%d,zone->z_pfn_cnt=%d\n\r",__FUNCTION__,__LINE__,zone->z_pfn_cnt);
+//    printk(PT_DEBUG,"zone->z_pfn_cnt=%d\n\r",zone->z_pfn_cnt);
     for(i = 0; i < zone->z_pfn_cnt;i++){
         /*
             判断页是否空闲，如果页空闲则加入buddy 子系统
@@ -293,6 +295,100 @@ void test_buddy()
     */
 }
 
+
+/* 声明外部符号（来自lds） */
+extern uint8_t _zone_metadata_start[];
+extern uint8_t _kernel_page_array_start[];
+extern uint8_t _user_page_array_start[];
+extern uint8_t _dma_page_array_start[];
+extern void put_hex(uint64_t val);
+/* Zone 全局变量 */
+xos_zone_t zone_normal = {0};
+xos_zone_t zone_user = {0};
+xos_zone_t zone_dma = {0};
+
+void zone_early_init(void)
+{
+    /* 验证内存布局 */
+    /*printk(PT_DEBUG,"Memory Layout:\n");
+    printk(PT_DEBUG,"  Kernel Zone: 0x%lx - 0x%lx (%d pages)\n", 
+           ZONE_KERNEL_START, ZONE_KERNEL_END, ZONE_KERNEL_PAGES);
+    printk(PT_DEBUG,"  User Zone:   0x%lx - 0x%lx (%d pages)\n", 
+           ZONE_USER_START, ZONE_USER_END, ZONE_USER_PAGES);
+    printk(PT_DEBUG,"  DMA Zone:    0x%lx - 0x%lx (%d pages)\n", 
+           ZONE_DMA_START, ZONE_DMA_END, ZONE_DMA_PAGES);*/
+    
+    /* 初始化内核zone（Normal Zone） */
+    zone_normal.z_pfn_cnt = ZONE_KERNEL_PAGES;
+    zone_normal.z_vmempage = (xos_page_t*)_kernel_page_array_start;
+    zone_normal.free_pages = ZONE_KERNEL_PAGES;
+    zone_normal.start_pfn = ZONE_KERNEL_START >> PAGE_SHIFT;
+    zone_normal.end_pfn = ZONE_KERNEL_END >> PAGE_SHIFT;
+    xos_spinlock_init(&zone_normal.slock);
+    
+    /*printk(PT_DEBUG,"Kernel Zone: z_vmempage at 0x%lx, pages: %d\n", 
+           (uintptr_t)zone_normal.z_vmempage, zone_normal.z_pfn_cnt);*/
+    
+    /* 初始化内核zone的所有页描述符 */
+    for (uint32_t i = 0; i < zone_normal.z_pfn_cnt; i++) {
+        zone_normal.z_vmempage[i].idle_flags = 0;  /* 空闲状态 */
+        zone_normal.z_vmempage[i].order = -1;      /* 未分配 */
+        zone_normal.z_vmempage[i].zone_type = ZONE_KERNEL;
+        zone_normal.z_vmempage[i].ref_cnt = 0;
+        list_init(&zone_normal.z_vmempage[i].list);
+    }
+    
+    /* 初始化用户zone */
+    zone_user.z_pfn_cnt = ZONE_USER_PAGES;
+    zone_user.z_vmempage = (xos_page_t*)_user_page_array_start;
+    zone_user.free_pages = ZONE_USER_PAGES;
+    zone_user.start_pfn = ZONE_USER_START >> PAGE_SHIFT;
+    zone_user.end_pfn = ZONE_USER_END >> PAGE_SHIFT;
+    xos_spinlock_init(&zone_user.slock);
+    
+    /*printk(PT_DEBUG,"User Zone: z_vmempage at 0x%lx, pages: %d\n", 
+           (uintptr_t)zone_user.z_vmempage, zone_user.z_pfn_cnt);*/
+    
+    for (uint32_t i = 0; i < zone_user.z_pfn_cnt; i++) {
+        zone_user.z_vmempage[i].idle_flags = 0;
+        zone_user.z_vmempage[i].order = -1;
+        zone_user.z_vmempage[i].zone_type = ZONE_USER;
+        zone_user.z_vmempage[i].ref_cnt = 0;
+        list_init(&zone_user.z_vmempage[i].list);
+    }
+    
+    /* 初始化DMA zone */
+    zone_dma.z_pfn_cnt = ZONE_DMA_PAGES;
+    zone_dma.z_vmempage = (xos_page_t*)_dma_page_array_start;
+    zone_dma.free_pages = ZONE_DMA_PAGES;
+    zone_dma.start_pfn = ZONE_DMA_START >> PAGE_SHIFT;
+    zone_dma.end_pfn = ZONE_DMA_END >> PAGE_SHIFT;
+    xos_spinlock_init(&zone_dma.slock);
+    put_hex((uint64)_dma_page_array_start);
+    xos_uart_puts("dma addr\n\r");
+    /*printk(PT_DEBUG,"DMA Zone: z_vmempage at 0x%lx, pages: %d\n", 
+           (uintptr_t)zone_dma.z_vmempage, zone_dma.z_pfn_cnt);*/
+    
+    for (uint32_t i = 0; i < zone_dma.z_pfn_cnt; i++) {
+        zone_dma.z_vmempage[i].idle_flags = 0;
+        zone_dma.z_vmempage[i].order = -1;
+        zone_dma.z_vmempage[i].zone_type= ZONE_DMA;
+        zone_dma.z_vmempage[i].ref_cnt = 0;
+        list_init(&zone_dma.z_vmempage[i].list);
+    }
+    
+    /* 初始化buddy系统 */
+   // printk(PT_DEBUG,"Initializing buddy allocator...\n");
+    /*buddy_init(&zone_normal, ZONE_KERNEL);
+    buddy_init(&zone_user, ZONE_USER);
+    buddy_init(&zone_dma, ZONE_DMA);*/
+
+    xos_insert_to_buddy(&zone_normal);
+    xos_insert_to_buddy(&zone_user);
+    xos_insert_to_buddy(&zone_dma);
+    
+   // printk(PT_DEBUG,"Zone initialization completed.\n");
+}
 /*
     使用平坦模型思想，开发自己的buddy 子系统,当前实现比较简单,本阶段暂时是实现基本功能，后续
     会重写buddy 子系统，支持稀疏模型慢慢迭代
@@ -318,80 +414,6 @@ void test_buddy()
     reserve 一段空间，用来分配给page 使用
     
 */
-
-void zone_early_init()
-{
-
-    /*
-
-        规划保留一段物理内容，提供给mem_page_buf 来使用
-        这段内存足够大，mem_page_buf[],可以描述当前系统的所有页
-
-        init_normal_zone  zone_mappage
-        init_dma_zone     dma_mappage
-        int_usr_zone      usr_mappage
-
-        我是这样规划的，暂时先使用共一个normal_zone
-
-        后续扩充多个zone_area
-
-        我当前规划的只有一个zone_normal 所以规划的这块区域mem 配置都归为zone_nomal
-
-        开始写代码吧let's go
-        
-    */
-
-
-    /*
-        计算zone_normal 管理的内存区域pfn 的个数
-        确定号start_pfn (是否需要2的次幂)，start_pfn 可以是奇数吗？
-        start_pfn 是否是2的次幂以及start_pfn 是奇数或者偶数并并比影响开发
-        本区域的pfn 号还是村0 开始，还是满足2次幂要求
-
-        当前页4K 不存在大页
-        计算normal_maxpfn
-
-
-        free_pages = NORMAL_ZONE_MEM_SIZE/sizeof(xos_page_t)
-
-        两个区域需要做比较，page 表示的区域，和真实可用物理空间区域做比较
-        去较小值
-
-
-    */
-    int i = 0;
-    zone_normal.z_pfn_cnt = (NORMAL_ZONE_MEM_SIZE >> PAGE_SHIFT);
-    zone_normal.z_vmempage = (xos_page_t*)PHY_TO_VIRT(PHY_MEM_PAGE_START);
-    zone_normal.free_pages = zone_normal.z_pfn_cnt;  
-    zone_normal.start_pfn = NORMAL_ZONE_PHY_START >> PAGE_SHIFT;
-    zone_normal.end_pfn = NORMAL_ZONE_PHY_END >> PAGE_SHIFT;
-    for(i = 0;i < zone_normal.z_pfn_cnt;i++){
-        zone_normal.z_vmempage[i].idle_flags = 0; /*设置当前page 为空闲状态*/
-        zone_normal.z_vmempage[i].order = -1; /*当前order值设置成0阶*/
-    }
-    
-    zone_user.z_pfn_cnt = (USER_ZONE_MEM_SIZE >> PAGE_SHIFT);
-    zone_user.z_vmempage =  zone_normal.z_vmempage+zone_normal.z_pfn_cnt;
-    zone_user.free_pages = zone_user.z_pfn_cnt;  
-    zone_user.start_pfn = USER_ZONE_PHY_START >> PAGE_SHIFT;
-    zone_user.end_pfn = USER_ZONE_PHY_END >> PAGE_SHIFT;
-    for(i = 0;i < zone_user.z_pfn_cnt;i++){
-        zone_user.z_vmempage[i].idle_flags = 0; /*设置当前page 为空闲状态*/
-        zone_user.z_vmempage[i].order = -1; /*当前order值设置成0阶*/
-    }
-    #if 0
-    zone_dma.z_pfn_cnt = (DMA_ZONE_PHY_START >> PAGE_SHIFT);
-    zone_dma.z_vmempage =  zone_user.z_vmempage+zone_user.z_pfn_cnt;
-    zone_dma.free_pages = zone_dma.z_pfn_cnt;  
-    zone_dma.start_pfn = DMA_ZONE_PHY_START >> PAGE_SHIFT;
-    zone_dma.end_pfn =   DMA_ZONE_PHY_END >> PAGE_SHIFT;
-    for(i = 0;i < zone_dma.z_pfn_cnt;i++){
-        zone_dma.z_vmempage[i].idle_flags = 0; /*设置当前page 为空闲状态*/
-        zone_dma.z_vmempage[i].order = -1; /*当前order值设置成0阶*/
-    }
-    #endif
-}
-
 
 
 void zone_init(xos_zone_t * zone_area, int zone_id)
@@ -454,35 +476,16 @@ int  single_zone_init(uint32 phy_page_start,uint32 phy_page_end, uint32_t zone_p
     return 0;
 }
 
-void org_zone_area_init()
-{
-    /*
-        实现多zone_area 规划并初始化
 
-        zone_normal :  a --b
-        zone_dma    :  b --d
-        zone_user   :  d---f
-
-        single_zone_init( kern_zone_phy_start,kern_zone_phy_end);
-        single_zone_init( dma_zone_phy_start,dma_zone_phy_end);
-        single_zone_init( usr_zone_phy_start,usr_zone_phy_end);
-    */
-    
-    single_zone_init(KERNEL_MEM_PAGE_START,KERNEL_MEM_PAGE_END,kern_zone_phy_start,kern_zone_phy_end,ZONE_KERNEL);
-    single_zone_init(USER_MEM_PAGE_START,USER_MEM_PAGE_END,usr_zone_phy_start,usr_zone_phy_end,ZONE_USER);
-    single_zone_init(DMA_MEM_PAGE_START,DMA_MEM_PAGE_END,dma_zone_phy_start,dma_zone_phy_end,ZONE_DMA);
-    
-
-}
 
 
 void xos_zone_init()
 {
     zone_early_init();
 
-    zone_init(&zone_normal, 0);
+   // zone_init(&zone_normal, 0);
         
-    zone_init(&zone_user, 0);
+   // zone_init(&zone_user, 0);
 
     //  zone_init(&zone_dma, 0); /*当前zone_dma 存在问题原因映射区域太小只有558M*/
     

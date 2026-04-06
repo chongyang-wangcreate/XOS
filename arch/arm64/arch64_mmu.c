@@ -28,6 +28,7 @@
 #include "mem_layout.h"
 #include "setup_map.h"
 #include "boot_mem.h"
+#include "xos_zone.h"
 
 extern void * exce_vectors;
 
@@ -36,7 +37,8 @@ extern void _putint (char *prefix, uint val, char* suffix);
 extern void config_mmu_regs (uint64* kern_pgtbl, uint64* user_pgtbl);
 void build_pgd_item(uint64 *kernel_pgd,uint64 *kernel_pmd);
 void config_enable_mmu(uint64 *kernel_pgd,uint64 *user_pgd);
-
+extern void *boot_alloc_l1_pgd();
+extern void *boot_alloc_l2_pmd();
 
 
 uint64 *kernel_pgtbl_tmp = NULL;
@@ -286,18 +288,19 @@ void config_mmu_regs (uint64* kern_pgtbl, uint64* user_pgtbl)
   
 void kernel_early_mem_map(uint64 *kern_pgd)
 {
-    /*
-        map text section
-        map rodata data section
-        map bss section
-        map devmem section
-    */
-    xos_2level_maps(kern_pgd,(uint64)VA_KERNEL_START + (uint64)MEM_PHY_START, (uint64)MEM_PHY_START, FIR_MAP_SIZE, ATTR_UXN|PT_ATTRINDX(MT_NORMAL));
-    xos_2level_maps(kern_pgd,(uint64)MEM_PHY_START, (uint64)MEM_PHY_START, FIR_MAP_SIZE, ATTR_UXN|PT_ATTRINDX(MT_NORMAL));
-    xos_2level_maps(kern_pgd,(uint64)VA_KERNEL_START + (uint64)PHY_KERNMAP_START, (uint64)PHY_KERNMAP_START, PHY_TMP_MAP_END-PHY_KERNMAP_START, ATTR_UXN|PT_ATTRINDX(MT_NORMAL));
-     //为了串口能够继续使用原地址，对设备暂时进行了一一映射
-    xos_2level_maps(kern_pgd,(uint64)VA_KERNEL_START+(uint64)DEVMEM_RANGE1_BASE, (uint64)DEVMEM_RANGE1_BASE, 0x2000000, PT_ATTRINDX(MT_DEVICE_nGnRnE));
-    xos_2level_maps(kern_pgd,(uint64)DEVMEM_RANGE1_BASE, (uint64)DEVMEM_RANGE1_BASE, DEVMEM_MAP_SIZE, PT_ATTRINDX(MT_DEVICE_nGnRnE)); 
+    // 现在这个函数只在 kernel_init 中调用，用于建立线性映射
+    // 但此时 MMU 已经开启，所以直接使用 xos_3level_maps
+    xos_2level_maps(kern_pgd, (uint64)VA_KERNEL_START + (uint64)MEM_PHY_START,
+                    (uint64)MEM_PHY_START, FIR_MAP_SIZE, ATTR_UXN | PT_ATTRINDX(MT_NORMAL));
+    xos_2level_maps(kern_pgd, (uint64)MEM_PHY_START, (uint64)MEM_PHY_START,
+                    FIR_MAP_SIZE, ATTR_UXN | PT_ATTRINDX(MT_NORMAL));
+    xos_2level_maps(kern_pgd, (uint64)VA_KERNEL_START + (uint64)PHY_KERNMAP_START,
+                    (uint64)PHY_KERNMAP_START, PHY_TMP_MAP_END - PHY_KERNMAP_START,
+                    ATTR_UXN | PT_ATTRINDX(MT_NORMAL));
+    xos_2level_maps(kern_pgd, (uint64)VA_KERNEL_START + (uint64)DEVMEM_RANGE1_BASE,
+                    (uint64)DEVMEM_RANGE1_BASE, 0x3000000, PT_ATTRINDX(MT_DEVICE_nGnRnE));
+    xos_2level_maps(kern_pgd, (uint64)DEVMEM_RANGE1_BASE, (uint64)DEVMEM_RANGE1_BASE,
+                    DEVMEM_MAP_SIZE, PT_ATTRINDX(MT_DEVICE_nGnRnE));
 }
 
 
@@ -349,13 +352,63 @@ void kernel_early_mem_map(uint64 *kern_pgd)
   
   */
 
+void print_hex(uint64_t val)
+{
+    const char hex_digits[] = "0123456789abcdef";
+    char buf[17];  // 16位十六进制 + 结束符
+    int i;
+    
+    // 从高位到低位处理
+    for (i = 15; i >= 0; i--) {
+        buf[i] = hex_digits[val & 0xF];
+        val >>= 4;
+    }
+    buf[16] = '\0';
+    
+    // 输出完整 16 位（64位值）
+    boot_puts(buf);
+}
+
+/**
+ * 带前缀的十六进制打印（推荐用于调试）
+ */
+void print_hex_prefix(uint64_t val)
+{
+    boot_puts("0x");
+    print_hex(val);
+}
+
+
+void print_hex_compact(uint64_t val)
+{
+    const char hex_digits[] = "0123456789abcdef";
+    char buf[17];
+    int i;
+    int leading_zero = 1; 
+    
+    for (i = 15; i >= 0; i--) {
+        int digit = val & 0xF;
+        val >>= 4;
+        
+        if (leading_zero && digit == 0 && i > 0) {
+            buf[i] = ' ';  
+        } else {
+            buf[i] = hex_digits[digit];
+            leading_zero = 0;
+        }
+    }
+    buf[16] = '\0';
+    
+    boot_puts(buf);
+}
+
 int boot_init_early_map()
 {
 
     boot_puts("setup_page_table..\n\r");
 
     kernel_pgtbl_tmp = boot_alloc_l1_pgd();
-
+    print_hex((unsigned long)kernel_pgtbl_tmp);
     kernel_l2_pmd = boot_alloc_l2_pmd();
 
     build_pgd_item(kernel_pgtbl_tmp,kernel_l2_pmd);

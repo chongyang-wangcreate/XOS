@@ -45,7 +45,7 @@
     将buffer[index] 信息提取成一个struct uart_queue 结构
 
 */
-
+uart_t  *boot_uart_reg = NULL;
 con_uart_que  uart_que;
 void uart_inqueue(char in_char);
 
@@ -68,7 +68,8 @@ void uart_loop()
 void xos_uart_init()
 {
     int remain;
-    uart_reg_base = P2V(UART0);
+    //uart_reg_base = (uart_t*)(UART0);
+    uart_reg_base = (uart_t*)UART0_VIRT;
     uart_reg_base->uart_intbaud_reg = UART_CLK / (16 * UART_BITRATE);
     remain = UART_CLK % (16 * UART_BITRATE);
     uart_reg_base->uart_fbaud_reg = (remain * 4 + UART_BITRATE / 2) / UART_BITRATE;
@@ -99,6 +100,14 @@ void xos_uart_putc (int c)
     uart_reg_base->uart_data_reg = c;
 }
 
+void xos_uart_puts(char *s)
+{
+        while (*s != '\0') {
+        xos_uart_putc(*s);
+        s++;
+    }
+
+}
 int xos_uart_getc (void)
 {
 
@@ -108,6 +117,47 @@ int xos_uart_getc (void)
     return uart_reg_base->uart_data_reg;
 }
 
+
+// 将单个十六进制数字 (0-15) 转换为 ASCII 字符
+void print_hex_digit(uint8_t num) {
+    if (num < 10) {
+        xos_uart_putc('0' + num);
+    } else {
+        xos_uart_putc('A' + num - 10);
+    }
+}
+
+// 打印 64 位无符号整数的十六进制格式
+void put_hex(uint64_t val) {
+    int i;
+    uint8_t digit;
+    
+    // 打印 "0x" 前缀
+    xos_uart_puts("0x");
+    
+    // uint64 是 64 位，十六进制需要 16 位来表示
+    // 我们从最高位开始打印，以确保不会出现前导零（除非值本身就是0）
+    int started = 0; // 标记是否已经开始打印有效数字（用于去除前导零）
+    
+    for (i = 15; i >= 0; i--) {
+        // 右移 (4 * i) 位并取低 4 位，得到当前十六进制位
+        digit = (val >> (i * 4)) & 0xF;
+        
+        // 逻辑：跳过前导零，但如果所有位都是零，则至少打印一个零
+        if (digit != 0) {
+            started = 1; // 遇到第一个非零数字，开始打印
+        }
+        
+        if (started) {
+            print_hex_digit(digit);
+        }
+    }
+    
+    // 特殊情况：如果数值为 0，上面的循环不会打印任何东西，所以这里要补一个 0
+    if (!started) {
+        xos_uart_putc('0');
+    }
+}
 
 
 

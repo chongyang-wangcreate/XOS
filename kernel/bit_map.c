@@ -83,7 +83,7 @@ int find_left_set_bit(bitmap_t *btmap)
         }
         
     }
-    printk(PT_RUN,"i_byte=%d,j=%d\n\r",i_byte,j);
+    //printk(PT_RUN,"i_byte=%d,j=%d\n\r",i_byte,j);
     return (i_byte*8+j);
 }
 
@@ -98,7 +98,7 @@ void set_bit(uint8 *start,uint32 i)
    uint32_t byte_idx = i / 8;    
    uint32_t bit_odd  = i % 8;    
    p[byte_idx] |= (1 << bit_odd);
-   printk(PT_RUN,"%s:%d JJJJJJJJJJbyte_idx=%d,bit_odd=%d\n\r",__FUNCTION__,__LINE__,byte_idx,bit_odd);
+   //printk(PT_RUN,"%s:%d JJJJJJJJJJbyte_idx=%d,bit_odd=%d\n\r",__FUNCTION__,__LINE__,byte_idx,bit_odd);
 
 }
 

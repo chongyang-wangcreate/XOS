@@ -138,7 +138,7 @@ void start_schedule_tail(struct task_struct *prev)
     arch_local_irq_enable();
     preempt_enable();
 
-    printk(PT_RUN,"%s TAIL TAIL enter \n",__func__);
+  //  printk(PT_RUN,"%s TAIL TAIL enter \n",__func__);
 }
 
 /*
@@ -189,7 +189,7 @@ struct task_struct * get_next_task(dlist_t *g_task_list){
         
         cur_task = list_entry(cur,struct task_struct,g_list);
         list_del(cur);
-        printk(PT_RUN,"%s:%d,cur_task->context->x22 =%llx\n\r",__FUNCTION__,__LINE__,cur_task->cpu_context.x22);
+       // printk(PT_RUN,"%s:%d,cur_task->context->x22 =%llx\n\r",__FUNCTION__,__LINE__,cur_task->cpu_context.x22);
         return cur_task;
     }
    return NULL;
@@ -226,7 +226,7 @@ struct task_struct * get_next_task_from_cpu(int cpuid)
         所以必须加入idle 任务，用于待命处于ready态，就是优先级总是被别人抢占
     */
     prio_max_num =  find_left_set_bit(&cpu_array[cpuid].run_bitmap);
-    printk(PT_RUN,"%s:%d prio_max_num=%d\n\r",__FUNCTION__,__LINE__,prio_max_num);
+    //printk(PT_RUN,"%s:%d prio_max_num=%d\n\r",__FUNCTION__,__LINE__,prio_max_num);
       /*
         从run_list 获取ready 任务更改状态为running
       */
@@ -234,7 +234,7 @@ struct task_struct * get_next_task_from_cpu(int cpuid)
       node = list_get_first_node(&cpu_array[cpuid].runqueue[prio_max_num].run_list);
       if(node != NULL){
             cur_task = list_entry(node,struct task_struct,cpu_list);
-            printk(PT_RUN,"%s:%d,cur_task->prio=%d\n\r",__FUNCTION__,__LINE__,cur_task->prio);
+            //printk(PT_RUN,"%s:%d,cur_task->prio=%d\n\r",__FUNCTION__,__LINE__,cur_task->prio);
             return cur_task;
       }
      
@@ -342,10 +342,10 @@ void load_first_task()
     int cpuid;
     struct task_struct *tsk = NULL;
     cpuid = cur_cpuid();
-    printk(PT_DEBUG,"%s:%d,LLLLLLLL\n\r",__func__,__LINE__);
+ //   printk(PT_DEBUG,"%s:%d,LLLLLLLL\n\r",__func__,__LINE__);
     tsk = get_next_task(&task_global_list);
     tsk = get_next_task_from_cpu(cpuid);
-    printk(PT_DEBUG,"%s:%d,tsk->prio=%d\n\r",__func__,__LINE__,tsk->prio);
+ //   printk(PT_DEBUG,"%s:%d,tsk->prio=%d\n\r",__func__,__LINE__,tsk->prio);
 
     cpu_array[cpuid].cur_task = tsk;
     xos_sti();

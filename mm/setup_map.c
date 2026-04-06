@@ -19,7 +19,15 @@
 
 ********************************************************/
 
+/*
 
+ TTBR1_EL1 → L1内核页表 (l1_kernel_pgt) -> L2内核页表0 (l2_kernel_pgt0)
+                                           ↓
+                                        L2内核页表1 (l2kpgt1)
+                                        
+TTBR0_EL1 → L1用户页表 (l1upgt) -> L2用户页表 (l2upgt)
+
+*/
 #include "types.h"
 #include "mmu.h"
 #include "string.h"
@@ -30,6 +38,10 @@
 #include "xos_page.h"
 #include "mmu.h"
 #include "error.h"
+#include "xos_mutex.h"
+#include "uart.h"
+#include "boot_mem.h"
+#include "xos_zone.h"
 /*
       pgd     pud      pmd      pte     phy_offset
     ------ |------- |------- |--------|------------|
@@ -49,9 +61,17 @@
 #define PTE_ADDR_MASK (~((1UL << PAGE_SHIFT) - 1))
 
 
+extern uint64_t _load_addr_start;
+extern uint64_t kernel_end_phys;
 extern uint64 *kernel_pgtbl_tmp;
 
 
+extern void *l1_kernel_pgt;  
+extern void *l2_kernel_pgt0;
+extern void *l2_kernel_pgt1;
+extern void *l1_user_pgt;
+
+int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot);
 /*
 48 位有效地址情况
     映射时需要继续深入搞清几个问题
@@ -221,6 +241,8 @@ int map_page(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot)
 }
 
 
+
+
 /*
     后续增加flags 判断是user 还是kernel
     normal mem maps
@@ -229,20 +251,64 @@ int map_page(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot)
 void xos_linear_maps(uint64 phy_start, uint64 phy_end)
 {
     uint64 map_size = phy_end - phy_start;
-    pgd_t *pgdir = P2V(kernel_pgtbl_tmp);
+   // pgd_t *pgdir = P2V(kernel_pgtbl_tmp);
+    pgd_t *pgdir = l1_kernel_pgt;
+
+    put_hex((uint64)pgdir);
+
     void *map_vaddr_star = P2V(phy_start);
+    xos_uart_puts("\n");
+    put_hex((uint64)map_vaddr_star);
+     xos_uart_puts("\n");
     uint64  prot = PG_RW_EL1_EL0;
     
-    xos_3level_maps(pgdir, map_vaddr_star,map_size, phy_start,prot);
+    boot_mem_3level_maps(pgdir, map_vaddr_star,map_size, phy_start,prot);
+//    xos_3level_maps(pgdir, map_vaddr_star,map_size, phy_start,prot);
     flush_tlb ();
 }
 
 
+/*
+extern char _load_addr_start_virt[];
+extern char kernel_end_phys_virt[];
 void all_phys_linear_map()
 {
-   xos_linear_maps(PHY_KERNMAP_START, PHY_KERNMAP_END);
-}
+    uint64_t p_start = (uint64_t)_load_addr_start_virt - VA_KERNEL_START;  // 转为物理地址
+    uint64_t p_end   = (uint64_t)kernel_end_phys_virt - VA_KERNEL_START;  // 如果 kernel_end_phys 已经是物理地址，则直接使用
+    xos_linear_maps(p_start, p_end);
 
+ 
+    xos_linear_maps(PHY_MEM_PAGE_START, PHY_MEM_PAGE_END);
+
+}*/
+extern uint8_t _zone_metadata_start[];
+extern uint8_t _kernel_page_array_start[];
+extern uint8_t _user_page_array_start[];
+extern uint8_t _dma_page_array_start[];
+extern uint8_t _dma_page_array_end[];
+extern char _load_addr_start_virt[];
+extern char kernel_end_phys_virt[];
+void all_phys_linear_map(void)
+{
+    /* 映射内核代码和数据区 */
+    uint64_t p_start = (uint64_t)_load_addr_start_virt - VA_KERNEL_START;
+    uint64_t p_end = (uint64_t)kernel_end_phys_virt - VA_KERNEL_START;
+    xos_linear_maps(p_start, p_end);
+    
+    /* 映射zone元数据区域 */
+    uint64_t meta_start = (uint64_t)_zone_metadata_start - VA_KERNEL_START;
+    uint64_t meta_end = (uint64_t)_dma_page_array_end - VA_KERNEL_START;
+    xos_linear_maps(meta_start, meta_end);
+    
+    /* 映射所有zone的物理内存 */
+    put_hex(ZONE_KERNEL_START);
+    xos_linear_maps(ZONE_KERNEL_START, ZONE_KERNEL_END);
+    xos_linear_maps(ZONE_USER_START, ZONE_USER_END);
+    xos_linear_maps(ZONE_DMA_START, ZONE_DMA_END);
+    
+   // printk(PT_DEBUG,"Linear mapping complete: 0x%lx - 0x%lx\n", 
+    //       ZONE_KERNEL_START, ZONE_DMA_END);
+}
 
 pmd_t* get_pmd(pgd_t *pgdir, void *va)
 {
@@ -304,7 +370,6 @@ void xos_2level_maps(uint64 *pgd,uint64 virt, uint64 phy, uint len, uint64 mm_at
         phy = phy + 0x200000;
     }
 
-
 }
 
 /*
@@ -345,6 +410,8 @@ int find_pte_phy(pgd_t *pgdir, void *va,uint64 *phy_addr)
 
 /*
     20240302 我们当前需要创建三级页表，三级足够了
+    202603.29 需要增加flag 判断，页表映射不完善，zone 系统没设置完不能使用buddy 子系统
+    所以需要增加判断 zone_init_done = 0 这时候需要使用boot_mem 分配物理地址空间
     
 */
 
@@ -392,6 +459,75 @@ int xos_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint
             pte_array_base = (pte_t*) xos_get_free_page(0,0);
             
             printk(PT_DEBUG,"%s:%d,pte_array_phy_base=%lx\n\r",__FUNCTION__,__LINE__,V2P(pte_array_base));
+            memset(pte_array_base, 0, PTE_ENTRY_SIZE);
+
+            *pmd = LINEAR_V2P_UL(pte_array_base) | PT_ENTRY_TABLE | PT_ENTRY_VALID;
+        }
+        
+        pte =  &pte_array_base[PTE_IDX(start)];     /*pte_array_base 三级页表基地址，偏移找到具体三级页表项*/
+        /*
+            配置相应的三级页表项
+        */
+        *pte = pa | ACCESS_FLAG | SH_IN_SH | prot | NON_SECURE_PA | PT_ATTRINDX(MT_NORMAL) | PT_ENTRY_PAGE | PT_ENTRY_VALID;
+
+        if (start == last) {
+            break;
+        }
+
+        start += PTE_ENTRY_SIZE;
+        pa += PTE_ENTRY_SIZE;
+    }
+   
+    return 0;
+
+}
+
+
+
+int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot)
+{
+    char *start, *last;
+    pgd_t *pgd;
+    pmd_t *pmd_array_base;
+    pmd_t *pmd;
+    pte_t *pte_array_base;
+    pte_t *pte;
+    int step_val =0;
+    start = (char*) ALIGN_DOWN(va, PTE_ENTRY_SIZE);
+    last = (char*) ALIGN_DOWN((uint64)va + size - 1, PTE_ENTRY_SIZE);
+    /*
+        for 循环每次va pa 都移动4k 步长，
+    */
+    for(;step_val < size ; step_val += PTE_ENTRY_SIZE){
+        
+        pgd = &pgdir[PGD_IDX((uint64)start)];  /*开始本来想直接使用*pgdir[PGD_IDX(uint64)va]&PG_4k_ADDR_MASK，太长了不美观*/
+        
+        if(*pgd & (PT_ENTRY_TABLE | PT_ENTRY_VALID)){ /*判断一级页表页表项项是否有效*/
+            pmd_array_base = (pmd_t*) P2V((*pgd) & PG_4k_ADDR_MASK);
+        }else{
+            /*
+                无效 申请页表空间，并将页表基地址放入pmd 对应的页表项中
+            */
+            pmd_array_base = (pmd_t*)boot_alloc_virt(4096);
+
+            memset(pmd_array_base, 0, PTE_ENTRY_SIZE);
+            /*
+                二级某个页表创建完毕，并且将页表基地址加入到一级页表(我们也成为页目录)某个目录项中
+
+            */
+            *pgd = LINEAR_V2P_UL(pmd_array_base) | PT_ENTRY_TABLE | PT_ENTRY_VALID;  
+        }
+        /*
+            二级页表空间在上面已经申请完毕，下面开始初始化二级页表pmd
+        */
+        pmd = &pmd_array_base[PMD_IDX(start)]; /*根据虚拟地址找到对应的pmd 项地址*/
+        if (*pmd & (PT_ENTRY_TABLE | PT_ENTRY_VALID)) /*判断二级页表页表项是否有效*/
+        {
+            pte_array_base = (pte_t*) P2V((*pmd) & PG_4k_ADDR_MASK);
+        }else{
+            pte_array_base = (pte_t*) boot_alloc_virt(4096);
+            
+           // printk(PT_DEBUG,"%s:%d,pte_array_phy_base=%lx\n\r",__FUNCTION__,__LINE__,V2P(pte_array_base));
             memset(pte_array_base, 0, PTE_ENTRY_SIZE);
 
             *pmd = LINEAR_V2P_UL(pte_array_base) | PT_ENTRY_TABLE | PT_ENTRY_VALID;

@@ -402,8 +402,10 @@ int create_process_vma(struct task_struct *cur_task)
     uint64 user_bss_start;
     uint64 user_bss_end;
 
-    user_pma_start = V_TO_P(_user_lma);
-    user_vma = V_TO_P(_user_vma);
+//    user_pma_start = V_TO_P(_user_lma);
+//    user_vma = V_TO_P(_user_vma);
+    user_pma_start = V_TO_P((uint64)_user_text_saddr);   // 用户映像的物理加载地址
+    user_vma = (uint64)_user_text_saddr;                 // 用户映像的虚拟地址        
     printk(PT_RUN,"lma_user=%p\n", user_pma_start);
     printk(PT_RUN,"vma_user=%p\n", user_vma);
     uint64 user_stack_start = (USER_STACK_TOP - USER_STACK_SIZE +1);

@@ -27,6 +27,15 @@ elif [ "$1" == "symbol" ]; then
     set arch aarch64
     target remote tcp::1234
 
+elif [ "$1" == "debug" ]; then
+    echo "Setting up GDB symbols"
+    export PATH=$PATH
+    clear
+    cd ..
+    qemu-system-aarch64 -machine virt,gic-version=3 -smp 1 -cpu cortex-a57 \
+    -machine type=virt -m 1024 -nographic \
+    -singlestep -kernel kernel.elf -s -S
+
 else
     echo "Invalid argument. Use 'run', 'run_debug', or 'symbol'."
 fi

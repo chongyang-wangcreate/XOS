@@ -14,5 +14,6 @@ extern void _k_puts (char *s);
 extern void _putint (char *prefix, uint val, char* suffix);
 
 extern uint32 printk(int level,const char* format, ...);
+extern void test_printk(int level);
 
 #endif

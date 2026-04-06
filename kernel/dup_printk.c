@@ -18,7 +18,7 @@
 #define true  1
 #define false 0
 #define INT_MAX		((int32_t)(~0U>>1))
-static char format_buf[1024];
+char format_buf[64];
 #define default_message_loglevel 4
 
 typedef char int8_t;
@@ -1664,6 +1664,12 @@ void _k_puts (char *s)
         _k_uart_putc(*s);
         s++;
     }
+}
+
+void test_printk(int level)
+{
+
+	_k_puts("hahaha\n\r");
 }
 
 

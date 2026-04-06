@@ -1,6 +1,8 @@
 #ifndef __MMU_REGS_H__
 #define __MMU_REGS_H__
 
+#define AI_DEVICE_nGnRnE  0x0
+#define AI_NORMAL_NC      0x44
 /*
      SCTLR_EL1 寄存器各 bit 定义
      位位置   名称  描述

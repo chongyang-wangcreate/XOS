@@ -61,7 +61,7 @@ void init_fs_context(struct task_struct *parent, struct task_struct *child)
 {
     if(!parent){
         xos_spinlock_init(&child->fs_context.lock);
-        printk(PT_DEBUG,"%s:%d FFFFFFF\n\r",__FUNCTION__,__LINE__);
+        //printk(PT_DEBUG,"%s:%d FFFFFFF\n\r",__FUNCTION__,__LINE__);
     }else{
         memcpy(&child->fs_context,&parent->fs_context,sizeof(parent->fs_context));
         xos_spinlock_init(&child->fs_context.lock);
@@ -80,9 +80,9 @@ void add_to_cpu_runqueue(int cpuid,struct task_struct *task)
     cpu_runque = &cpu_array[cpuid].runqueue[task->prio];
     if(task->prio < PRIO_MAX){
         cpu_array[cpuid].run_count[task->prio]++;
-        printk(PT_RUN,"%s:%d  task->prio=%d\n\r",__FUNCTION__,__LINE__,task->prio);
+        //printk(PT_RUN,"%s:%d  task->prio=%d\n\r",__FUNCTION__,__LINE__,task->prio);
         if(cpu_array[cpuid].run_count[task->prio] <= 1){
-            printk(PT_RUN,"%s:%d task->prio=%d\n\r",__FUNCTION__,__LINE__,task->prio);
+           // printk(PT_RUN,"%s:%d task->prio=%d\n\r",__FUNCTION__,__LINE__,task->prio);
             set_bit((uint8_t*)(cpu_array[cpuid].run_bitmap.bit_start), task->prio); /*2024.0404 20.12还需要增加同优先级优先级统计计数*/
         }
         if(get_load_flags() != 0){
@@ -90,7 +90,7 @@ void add_to_cpu_runqueue(int cpuid,struct task_struct *task)
                 /*
                     设置调度标志
                 */
-                printk(PT_RUN,"%s:%d,task->prio=%d,current_task->prio=%d\n\r",__FUNCTION__,__LINE__,task->prio,current_task->prio);
+               // printk(PT_RUN,"%s:%d,task->prio=%d,current_task->prio=%d\n\r",__FUNCTION__,__LINE__,task->prio,current_task->prio);
                 current_task_info_new()->need_switch_flags = 1;
             }
         }
@@ -222,10 +222,10 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
     child->cpu_context.x25 = 4100;
     child->cpu_context.x26 = 4101;
     child->cpu_context.x27 = 4102;
-    printk(PT_RUN,"%s:%d,fn=%llx\n\r",__FUNCTION__,__LINE__,fn);
-    printk(PT_RUN,"%s:%d,x21=%llx\n\r",__FUNCTION__,__LINE__,child->cpu_context.x21);
+   // printk(PT_RUN,"%s:%d,fn=%llx\n\r",__FUNCTION__,__LINE__,fn);
+   // printk(PT_RUN,"%s:%d,x21=%llx\n\r",__FUNCTION__,__LINE__,child->cpu_context.x21);
    
-    printk(PT_RUN,"%s:%d,sp_ptr=%llx\n\r",__FUNCTION__,__LINE__,(unsigned long)ptr);
+   // printk(PT_RUN,"%s:%d,sp_ptr=%llx\n\r",__FUNCTION__,__LINE__,(unsigned long)ptr);
     child->sched_flags = 0;
     child->cpu_context.pc = (unsigned long)ret_from_fork;
     child->cpu_context.sp = (unsigned long)ptr;  //栈顶

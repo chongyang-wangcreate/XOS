@@ -19,6 +19,7 @@ typedef struct page_desc{
     dlist_t list;
     int order;
     int idle_flags;
+    int zone_type;
     int ref_cnt;
     void *cache;
     xos_spinlock_t cache_lock;

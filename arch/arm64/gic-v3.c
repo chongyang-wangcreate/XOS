@@ -563,7 +563,7 @@ int gic_init_bases(void __iomem *dist_base,
 		return err;
 	}
     
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
+   // printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
 	gic_data.nr_redist_regions = nr_redist_regions;
 	gic_data.dist_base = dist_base;
 
@@ -572,7 +572,7 @@ int gic_init_bases(void __iomem *dist_base,
 		gic_data.redist_regions[i].redist_base = rdist_base;
 		rdist_base = rdist_base + 0x20000;
 	}
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
+  //  printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
 	/*
 	 * Find out how many interrupts are supported.
 	 * The GIC only supports up to 1020 interrupt sources (SGI+PPI+SPI)
@@ -584,10 +584,10 @@ int gic_init_bases(void __iomem *dist_base,
 
 	gic_data.irq_nr = gic_irqs;
    
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
+   // printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
 	gic_dist_init();
 	gic_cpu_init();
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
+   // printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
 	return 0;
 }
 

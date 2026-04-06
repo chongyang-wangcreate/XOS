@@ -57,6 +57,8 @@
 #include "xos_bus.h"
 #include "workqueue.h"
 #include "arch64_irq.h"
+#include "boot_mem.h"
+#include "uart.h"
 
 /********************************************************************************************
 
@@ -85,8 +87,8 @@ char idle_stack[1024];
 
 void clear_kbss (void)
 {
-    printk(PT_DEBUG,"clear_bss%s:%d\n\r",__FUNCTION__,__LINE__);
-    memset(&k_bss_start, 0x00, (unsigned long)&k_bss_end-(unsigned long)&k_bss_start);
+   // printk(PT_DEBUG,"clear_bss%s:%d\n\r",__FUNCTION__,__LINE__);
+  //  memset(&k_bss_start, 0x00, (unsigned long)&k_bss_end-(unsigned long)&k_bss_start);
 }
 
 
@@ -113,7 +115,8 @@ void kernel_thread1(char *array)
 
 void kernel_thread2(char *array)
 {
-    printk(PT_DEBUG,"%s:%d kernel_thread2 enter\n\r",__func__,__LINE__);
+   // printk(PT_DEBUG,"%s:%d kernel_thread2 enter\n\r",__func__,__LINE__);
+   xos_uart_puts("kernel_thread2\n");
     while(1)
         {
         printk(PT_RUN,"%s:%d run \n\r",__func__,__LINE__);
@@ -156,21 +159,32 @@ void xos_set_vector_entry()
 void kernel_init (void)
 {
     clear_kbss();
+  // boot_uart_init((uint32*)UART0_VIRT);
+  // boot_puts("xos boot_main\n");
+   char *test_ptr = NULL;
     xos_uart_init();
+    boot_mem_init();
+    xos_uart_puts("Hello from kernel_init 2\n");
+    
+    xos_set_vector_entry();
     /*
         to do 
         printk_debug(){level = PT_DEBUG};
         printk_run(){level = PT_RUN};
     */
-    printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
+   // printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
 
     all_phys_linear_map();
     xos_zone_init();
     mem_cache_init();
-    test_buddy();
-    
-    printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
-
+   // test_buddy();
+    xos_uart_puts("Hello from kernel_init 4\n");
+    test_printk(PT_DEBUG);
+   // printk(PT_DEBUG,"it is ok");
+    test_ptr = (char *)xos_get_free_page(0,1);
+    put_hex((uint64)test_ptr);
+    *test_ptr = 'c';
+    xos_uart_puts("gets gets\n");
     local_irq_disable();
     xos_irq_init();
     xos_uart_irq_init();
@@ -188,7 +202,7 @@ void kernel_init (void)
     xos_thread_create(1, (unsigned long)&kernel_thread2, 7);
     xos_thread_create(5, (unsigned long)&kernel_idle, 6);
     xos_thread_create(2, (unsigned long)&start_init, 6);
-
+    xos_uart_puts("Hello from kernel_init 6\n");
     xos_cli();
     load_proc_flags = 1;
     load_first_task();

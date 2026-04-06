@@ -27,14 +27,18 @@
 
 */
 
-#define BOOT_MEM_LEN  0x10000
+#define BOOT_MEM_LEN  0x100000
 
 extern uint64 bss_end[];
 
 
-extern uint64 _boot_mem_begin;
+extern uint64 _boot_mem_begin[];
+extern char _boot_main_stack_top[];
+uint64 p_boot_mem_start  =(uint64)_boot_mem_begin - VA_KERNEL_START;
 
-uint64 *p_boot_mem_start  =&_boot_mem_begin;
+/* 2. Boot内存分配器区域（在lds中定义） */
+//extern uint8_t _boot_mem_begin[];
+extern uint8_t _boot_mem_end[];  /* 需要在lds中添加_end符号 */
 
 
 uint64 boot_mem_start = 0;
@@ -48,7 +52,8 @@ extern void boot_puts (char *s);
 
 void boot_mem_init()
 {
-    boot_mem_start = (uint64)p_boot_mem_start; /*引用*/
+    boot_mem_start = (uint64)p_boot_mem_start ; /*引用*/
+    put_hex(boot_mem_start);
     boot_mem_end = (uint64)((uint64)boot_mem_start + BOOT_MEM_LEN);
 
 }
@@ -57,10 +62,20 @@ void boot_mem_init()
 
 uint64 boot_mem_alloc(size_t size) {
     uint64 ret_addr = (uint64)boot_mem_start;
+     put_hex(ret_addr);
     boot_mem_start += ALIGN_UP(size, sizeof(uint64));
 
     return ret_addr;
 }
+
+uint64 boot_alloc_virt(size_t size) {
+    uint64 ret_addr = (uint64)boot_mem_start;
+    // put_hex(ret_addr);
+    boot_mem_start += ALIGN_UP(size, sizeof(uint64));
+
+    return ret_addr + VA_KERNEL_START;
+}
+
 
 
 void *boot_alloc_l1_pgd()

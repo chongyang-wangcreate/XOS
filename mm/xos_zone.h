@@ -33,7 +33,11 @@ typedef struct zone_struct {
     xos_spinlock_t slock;
 }xos_zone_t;
 
-#define MEM_PAGE_SIZE      (60*1024*1024)
+
+
+
+//#define MEM_PAGE_SIZE      (60*1024*1024)
+#define MEM_PAGE_SIZE      (6*1024*1024)
 
 #define PHY_MEM_PAGE_START (MEM_PHY_START + FIR_MAP_SIZE )
 #define PHY_MEM_PAGE_END   (PHY_MEM_PAGE_START + MEM_PAGE_SIZE -1)
@@ -41,9 +45,11 @@ typedef struct zone_struct {
 //#define PH_MEM_PAGE_USER_START 
 
 
-#define NORMAL_ZONE_MEM_SIZE  500*1024*1024
-#define USER_ZONE_MEM_SIZE    300*1024*1024
-#define DMA_ZONE_MEM_SIZE     100*1024*1024
+//#define NORMAL_ZONE_MEM_SIZE  500*1024*1024
+
+#define NORMAL_ZONE_MEM_SIZE  100*1024*1024
+#define USER_ZONE_MEM_SIZE    100*1024*1024
+#define DMA_ZONE_MEM_SIZE     10*1024*1024
 
 
 #define NORMAL_ZONE_PHY_START (PHY_MEM_PAGE_END +1)

@@ -22,7 +22,7 @@ case $1 in
         # 先执行 kernel_lds.sh
         echo "Executing kernel_lds.sh..."
         cd ../arch/arm64 || { echo "Failed to change directory to ../arch/arm64"; exit 1; }
-        ./kernel_lds.sh || { echo "Failed to execute kernel_lds.sh"; exit 1; }
+        #./kernel_lds.sh || { echo "Failed to execute kernel_lds.sh"; exit 1; }
 
         # 返回到原目录
         cd "$current_dir" || { echo "Failed to return to the original directory"; exit 1; }
@@ -39,7 +39,7 @@ case $1 in
 
         # 执行完后，执行 rm_lds.sh
         cd ./arch/arm64 || { echo "Failed to change directory to ../arch/arm64"; exit 1; }
-        ./rm_lds.sh || { echo "Failed to execute rm_lds.sh"; exit 1; }
+        #./rm_lds.sh || { echo "Failed to execute rm_lds.sh"; exit 1; }
 
         # 打印完成信息
         echo "Makefile has been copied to $parent_dir and 'make' has been executed."

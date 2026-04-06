@@ -3,7 +3,7 @@
 #define __DEV_ADDR_DEF_H__
 
 
-#define MEM_PHY_START       0x40000000
+//#define MEM_PHY_START       0x40000000
 
 
 #define DEVMEM_RANGE1_BASE        0x08000000

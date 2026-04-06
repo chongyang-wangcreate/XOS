@@ -1,41 +1,14 @@
 #include "types.h"
 
 
-void *memset(void *s, int c, size_t n) {
-    unsigned char *ptr = (unsigned char *)s;  
-    unsigned int value = (unsigned char)c;    
-    /*使用value 填充满4个字节，加快拷贝速率*/
-    unsigned int aligned_value = value | (value << 8) | (value << 16) | (value << 24); 
+void *memset(void *s, int c, size_t n){
 
-    // 对齐处理
-    uintptr_t start = (uintptr_t)ptr;  // 获取起始地址
-    size_t offset = start % 4;  // 计算地址偏移
-    ptr += offset;
-
-    while (offset > 0 && n > 0) {
-        *ptr = (unsigned char)c;
-        ptr++;
-        offset--;
-        n--;
-    }
-
-    // 填充对齐部分，每次填充 4 字节
-    unsigned int *aligned_ptr = (unsigned int *)ptr;
-    while (n >= 4) {
-        *aligned_ptr = aligned_value; // 4 字节拷贝
-        aligned_ptr++;
-        ptr = (unsigned char *)aligned_ptr;
-        n -= 4;
-    }
-
-    // 填充剩余的非对齐部分（如果有的话）
+    unsigned char *p = (unsigned char *)s;
     while (n > 0) {
-        *ptr = (unsigned char)c;
-        ptr++;
+        *p++ = c;
         n--;
     }
-
-    return s;
+    return NULL;
 }
 
 /*

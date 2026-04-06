@@ -41,7 +41,7 @@ extern void * bss_end;
 
 extern void set_virt_stack (void);
 
-uart_t  *boot_uart_reg = NULL;
+
 
 void boot_uart_init(uint32 *addr)
 {
