@@ -56,6 +56,10 @@ void * xos_get_free_page(int mode,int order)
 
     xos_spinlock(&zone_normal.slock);
     page = xos_get_page(&zone_normal,order);
+    if(page == NULL){
+        printk(PT_ERROR,"%s:%d,zone_normal out of pages,order=%d\n\r",__FUNCTION__,__LINE__,order);
+        return NULL;
+    }
     xos_unspinlock(&zone_normal.slock);
     return PHY_TO_VIRT((XOS_PAGE_TO_PHY(page)));
 }
@@ -75,9 +79,13 @@ void *xos_get_phy(int mode,int order)
     xos_page_t *page;
     xos_spinlock(&zone_normal.slock);
     page = xos_get_page(&zone_normal,order);
-    phy_addr = (void*)(XOS_PAGE_TO_PHY(page));
     xos_unspinlock(&zone_normal.slock);
-
+    if(page == NULL){
+        printk(PT_ERROR,"%s:%d,zone_normal out of pages,order=%d\n\r",__FUNCTION__,__LINE__,order);
+        return NULL;
+    }
+    phy_addr = (void*)(XOS_PAGE_TO_PHY(page));
+    
     return phy_addr;
 }
 
@@ -88,8 +96,13 @@ void *xos_get_user_phy(int mode,int order)
     xos_page_t *page;
     xos_spinlock(&zone_user.slock);
     page = xos_get_page(&zone_user,order);
-    phy_addr = (void*)(XOS_USER_PAGE_TO_phy(page));
     xos_unspinlock(&zone_user.slock);
+   
+    if(page == NULL){
+        printk(PT_ERROR,"%s:%d,zone_normal out of pages,order=%d\n\r",__FUNCTION__,__LINE__,order);
+        return NULL;
+    }
+    phy_addr = (void*)(XOS_USER_PAGE_TO_phy(page));
 
     return phy_addr;
 }
