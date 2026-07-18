@@ -1,6 +1,6 @@
 /* 直接在entry.S中定义所有常量，避免头文件问题 */
 
-/* ============ 汇编可用的常量定义 ============ */
+
 .equ VA_KERNEL_START,       0xFFFFFF8000000000
 .equ PHYS_MEM_START,        0x40000000
 .equ DEVICE_MEM_START,      0x08000000      /* 注意：应该是0x08000000，不是0x09000000 */
@@ -17,12 +17,12 @@
 .equ PTE_INDX_DEVICE,       0x0000000000000000
 .equ PTE_INDX_NORMAL,       0x0000000000000004
 
-/* 页表项属性组合 */
+
 .equ PTE_KERNEL_FLAGS,      (PTE_AF | PTE_INDX_NORMAL | PTE_VALID)  /* 0x405 */
 .equ PTE_DEVICE_FLAGS,      (PTE_AF | PTE_INDX_DEVICE | PTE_VALID)  /* 0x401 */
 .equ PTE_TABLE_FLAGS,       (PTE_TABLE | PTE_VALID)                 /* 0x3 */
 
-/* TCR 设置 - 39位地址空间 */
+
 .equ TCR_T0SZ,              (64 - 39)           /* 25 */
 .equ TCR_T1SZ,              ((64 - 39) << 16)   /* 25 << 16 = 0x01900000 */
 .equ TCR_TG0_4KB,           (0 << 14)           /* 0 */
@@ -34,6 +34,7 @@
 .equ MAIR_DEVICE_nGnRnE,    0x00
 .equ MAIR_NORMAL_NC,        0x44
 .equ MAIR_VALUE,            ((MAIR_NORMAL_NC << 8) | MAIR_DEVICE_nGnRnE)  /* 0x4400 */
+.equ CPACR_EL1_FPEN,        (3 << 20)
 
 .section ".text.boot"
 
@@ -46,6 +47,10 @@ _start:
     b secondary_entry
 
 kernel_start:
+    ldr x0, =CPACR_EL1_FPEN
+    msr cpacr_el1,x0
+    isb
+
     ldr x1, =__bss_start_phys
     ldr w2, =__bss_size
 1:  cbz w2, 2f
@@ -210,13 +215,17 @@ l2pgt_loop1:
     msr sctlr_el1, x0
     isb
     
-    /* 跳转到高地址 */
+
     ldr x1, =p_entry_virt
     br x1
 
 .section ".text"
 .global p_entry_virt
 p_entry_virt:
+    ldr x0, =CPACR_EL1_FPEN
+    msr cpacr_el1,x0
+    isb
+
     mrs x0, mpidr_el1
     and x0, x0, #0xff
     add x0, x0, #1
@@ -225,7 +234,7 @@ p_entry_virt:
     ldr x2, =main_stack_top
     add x2, x2, x0
     mov sp, x2
-    bl kernel_init
+    bl boot_main
 
 secondary_entry:
     adrp x0, l1_user_pgt
