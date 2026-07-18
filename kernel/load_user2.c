@@ -181,7 +181,7 @@ void vma_space_mapping(uint64_t *pg_dir, void *virt_addr,
             printk(PT_RUN,"%s: phy_addr=%lx\n", __FUNCTION__,(uint64)phy_addr);
         
         }
-        printk(PT_RUN,"%s: phy_addr=%lx\n", __FUNCTION__,(uint64)phy_addr);
+    //    printk(PT_RUN,"%s: phy_addr=%lx\n", __FUNCTION__,(uint64)phy_addr);
     }else{
             addr = (char*) align_down(virt_addr, PTE_ENTRY_SIZE);
             for(i = 0; i < size ;i += PAGE_SIZE){

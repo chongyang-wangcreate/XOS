@@ -49,7 +49,6 @@ ssize_t do_sys_read(int fd,void *buf,ssize_t count)
     /*
         Check file permissions  very important
     */
-    printk(PT_RUN,"%s:%d,cur_file->f_mode=%x\n\r",__FUNCTION__,__LINE__,cur_file->f_mode);
     if (cur_file->f_mode & FMODE_READ){
         if(cur_file->f_ops->read){
             return cur_file->f_ops->read(cur_file, buf, count, &cur_file->f_pos);

@@ -61,7 +61,7 @@ typedef struct console_uart_queue{
 
 extern void xos_uart_init();
 extern void xos_uart_irq_init ();
-
+extern void xos_uart_putc(int c);
 extern con_uart_que  uart_que;
 extern void console_wake_process();
 extern char uart_outqueue();

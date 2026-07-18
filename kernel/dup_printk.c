@@ -18,7 +18,7 @@
 #define true  1
 #define false 0
 #define INT_MAX		((int32_t)(~0U>>1))
-char format_buf[64];
+char format_buf[256];
 #define default_message_loglevel 4
 
 typedef char int8_t;
@@ -1653,9 +1653,7 @@ extern void _k_puts (char *s);
 
 void _k_uart_putc(int c)
 {
-    
-    volatile uint8 * uart0 = (uint8*)(UART0+VA_KERNEL_START);
-    *uart0 = c;
+	xos_uart_putc(c);
 }
 
 void _k_puts (char *s)
@@ -1668,8 +1666,12 @@ void _k_puts (char *s)
 
 void test_printk(int level)
 {
+    if(level <= PT_RUN){
+		
+		_k_puts("self-test \n\r");
 
-	_k_puts("hahaha\n\r");
+	}
+
 }
 
 
@@ -1688,7 +1690,7 @@ uint32 printk(int level,const char *fmt, ...)
 	/**
 	 * 将当前字符输出到临时缓冲区
 	 */
-	len = vsprintf(format_buf, fmt, args);
+	len = vsnprintf(format_buf,sizeof(format_buf),fmt,args);
 
 	/* 检查消息等级，没有则使用默认等级进行打印 */
 //	p = format_buf;

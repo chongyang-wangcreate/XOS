@@ -245,7 +245,6 @@ static void ioq_wait(con_uart_que* ioq) {
     cur_tsk->state = TSTATE_PENDING;
     add_wait_queue(&cur_tsk->wait_list,&wait_queue_head.console_wait_list);
     del_from_cpu_runqueue(cur_cpuid(),cur_tsk);
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
     xos_unspinlock(&wait_queue_head.con_lock);
     schedule();
 }
@@ -254,11 +253,9 @@ char ioq_getchar(con_uart_que* ioq) {
 
    struct task_struct  *cur_tsk =  current_task;
    while (ioq_empty(ioq)) {
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
        ioq_wait(ioq);
    }
    ioq->tsk = cur_tsk;
-   printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
    char byte = ioq->msg_buf[ioq->out_idx];	 
    ioq->out_idx =  next_pos(ioq->out_idx); 
    return byte; 
@@ -277,7 +274,6 @@ void ioq_putchar(con_uart_que* ioq, char byte) {
 //    ||((int)byte == 13))
    {
         if(ioq->tsk != NULL){
-            printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
             wake_up_proc(ioq->tsk);
         }
    }
