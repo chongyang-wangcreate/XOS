@@ -282,11 +282,11 @@ void schedule(void)
 //  next = get_next_task(&task_global_list);
     next = get_next_task_from_cpu(cpuid);
     
-    printk(PT_RUN,"%s: next->cpu_context.x19=%lx\n\r",__FUNCTION__,next->cpu_context.x19);
-    printk(PT_RUN,"%s: next->cpu_context.x21=%lx\n\r",__FUNCTION__,next->cpu_context.x21);
+    printk(PT_DEBUG,"%s: next->cpu_context.x19=%lx\n\r",__FUNCTION__,next->cpu_context.x19);
+    printk(PT_DEBUG,"%s: next->cpu_context.x21=%lx\n\r",__FUNCTION__,next->cpu_context.x21);
     prev = get_current_task();
     cpu_array[cpuid].cur_task = next;
-    printk(PT_RUN,"%s: next->cpu_context.pc=%lx\n\r",__FUNCTION__,prev->cpu_context.pc);
+    printk(PT_DEBUG,"%s: next->cpu_context.pc=%lx\n\r",__FUNCTION__,next->cpu_context.pc);
     if(next->task_pgd != NULL)
     {
         set_ttbr0_el1((u64)V2P(next->task_pgd));

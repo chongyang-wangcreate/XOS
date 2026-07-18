@@ -55,7 +55,7 @@ int create_vma(struct task_struct *tsk, unsigned long vm_start,
     vma->vm_end = vm_end;
     vma->vm_flags = vm_flags;
     vma->pma_saddr = phy_addr;
-    printk(PT_RUN,"%s: %d\n", __FUNCTION__,__LINE__);
+    printk(PT_DEBUG,"%s: %d,vm_start=%lx,vm_end=%lx\n", __FUNCTION__,__LINE__,vm_start,vm_end);
     if (tsk->mm->mmap != NULL) {
         tsk->mm->mmap->vm_prev = vma;
     }

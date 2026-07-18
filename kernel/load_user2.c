@@ -168,6 +168,7 @@ void vma_space_mapping(uint64_t *pg_dir, void *virt_addr,
         return;
     }
     if (phy_addr == (0xffffffffffffffff)) {
+        return ;
         addr = (char*) align_down(virt_addr, PTE_ENTRY_SIZE);
         phy_addr = (uint64_t)xos_get_phy(0, 0);
         for(i = 0; i < size ;i += PAGE_SIZE){
@@ -218,7 +219,7 @@ void user_page_mapping(uint64_t *pg_dir, void *virt_addr,
         page_phy = xos_get_user_phy(0, 0);
         if(page_phy == NULL){
 
-            printk(PT_RUN,"%s:no user page for va=%lx\n",__FUNCTION__,(uint64_t)addr);
+            printk(PT_ERROR,"%s:no user page for va=%lx\n",__FUNCTION__,(uint64_t)addr);
             return ;
         }
         phy_addr = (uint64_t)page_phy;
@@ -230,7 +231,7 @@ void user_page_mapping(uint64_t *pg_dir, void *virt_addr,
             }
             page_phy = xos_get_user_phy(0, 0);
             if(page_phy == NULL){
-                printk(PT_RUN,"%s:no user page for va=%lx\n",__FUNCTION__,(uint64_t)addr);
+                printk(PT_ERROR,"%s:no user page for va=%lx\n",__FUNCTION__,(uint64_t)addr);
                 return ;
             }
             phy_addr = (uint64_t)page_phy;
@@ -239,13 +240,14 @@ void user_page_mapping(uint64_t *pg_dir, void *virt_addr,
     }else{
             addr = (char*) align_down(virt_addr, PTE_ENTRY_SIZE);
             for(i = 0; i < size ;i += PAGE_SIZE){
-                map_page(pg_dir, virt_addr, size, (uint64)phy_addr,PG_RW_EL1_EL0);
+                map_page(pg_dir, addr, size, (uint64)phy_addr,PG_RW_EL1_EL0);
                 addr += PAGE_SIZE;
                 phy_addr += PAGE_SIZE;
             }
     }
 
 }
+
 
 
 void vma_space_maps(struct task_struct *t)
@@ -441,12 +443,10 @@ int create_process_vma(struct task_struct *cur_task)
     LOAD_LINKER_SYM(_user_bss_lma,user_bss_lma);
     user_vma = user_text_start;
     LOAD_LINKER_SYM(_user_bss_eaddr,user_bss_end);
-    printk(PT_RUN,"lma_user=%p\n", user_pma_start);
-    printk(PT_RUN,"vma_user=%p\n", user_vma);
+    printk(PT_DEBUG,"lma_user=%p\n", user_pma_start);
+    printk(PT_DEBUG,"vma_user=%p\n", user_vma);
     uint64 user_stack_start = (USER_STACK_TOP - USER_STACK_SIZE +1);
     uint64 user_stack_end = (USER_STACK_TOP);
-
-
 
 
     ret = create_text_vma(cur_task,user_pma_start);
@@ -487,7 +487,7 @@ int create_process_vma(struct task_struct *cur_task)
         printk(PT_DEBUG,"%s:%d\n",__FUNCTION__,__LINE__);
         return ret; 
     }
-
+    printk(PT_DEBUG,"%s:%d\n",__FUNCTION__,__LINE__);
 
 
     return ret;
@@ -526,7 +526,7 @@ void process_create()
     set_ttbr0_el1((uint64)(V2P(cur_task->task_pgd)));
 
     user_entry_addr = get_user_entry();
-    printk(PT_RUN,"%s:%d,user_init_addr=%lx\n",__FUNCTION__,__LINE__,user_entry_addr);
+    printk(PT_DEBUG,"%s:%d,user_init_addr=%lx\n",__FUNCTION__,__LINE__,user_entry_addr);
 
     /*
         创建了新的task 任务，将新任务加入到相应处理器的runqueue 队列
@@ -569,14 +569,15 @@ void process_create()
     list_init(&cur_task->cpu_list);
     list_init(&cur_task->sem_list);
     list_init(&cur_task->delay_list);
-
+    printk(PT_DEBUG,"%s:%d,cur_task->cpu_context.pc=%lx\n",__FUNCTION__,__LINE__,cur_task->cpu_context.pc);
     init_fs_context(current_task,cur_task);
     memset(&cur_task->files_set.fd_set,0,sizeof(cur_task->files_set.fd_set));
     cur_task->files_set.fd_map.bit_start = (uint8_t*)cur_task->files_set.fd_set;
     cur_task->files_set.fd_map.btmp_bytes_len = sizeof(cur_task->files_set.fd_set);
-
+    printk(PT_DEBUG,"%s:%d,user_init_addr=%lx\n",__FUNCTION__,__LINE__,user_entry_addr);
     xos_init_timer(&cur_task->timer, 0, NULL, NULL);
     add_to_cpu_runqueue(cpuid,cur_task);
+    printk(PT_DEBUG,"%s:%d,user_init_addr=%lx\n",__FUNCTION__,__LINE__,user_entry_addr);
 alloc_stack_faild:
     return ;
 

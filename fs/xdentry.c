@@ -178,6 +178,16 @@ void  free_dentry_cache(xdentry *dentry_node)
 
 }
 
+static int dentry_name_match(xdentry *dentry_node,const path_name_t *name)
+{
+    if(dentry_node == NULL || name == NULL ||
+       dentry_node->file_name.path_name == NULL || name->path_name == NULL){
+        return 0;
+    }
+    return strncmp((const char*)dentry_node->file_name.path_name,
+    (const char*)name->path_name,name->len) == 0 && 
+    strlen((const char*)dentry_node->file_name.path_name)== name->len;
+}
 /*
     strlen((const char*)dentry_node->file_name.path_name) == name->len
     name->path_name 字符串未做截断操作，so
@@ -193,8 +203,7 @@ xdentry *find_in_pdentry(xdentry *parent, path_name_t *name)
     list_for_each(list_node, ch_head){
         dentry_node = list_entry(list_node, xdentry, ch_at_parent_list);
         printk(PT_RUN,"%s:%d,dentry_node->path_name=%s,name=%s,name_len=%d,\n\r",__FUNCTION__,__LINE__,dentry_node->file_name.path_name,(const char*)name->path_name,name->len);
-        if(strncmp((const char*)dentry_node->file_name.path_name,(const char*)name->path_name,name->len) == 0 &&(dentry_node->parent_dentry == parent)&&
-            (strlen((const char*)dentry_node->file_name.path_name) == name->len))
+        if(dentry_name_match(dentry_node,name))
         {
             xos_unspinlock(&dentry_lock);
             printk(PT_RUN,"%s:%d,dentry_node->path_name=%s,\n\r",__FUNCTION__,__LINE__,dentry_node->file_name.path_name);
@@ -215,8 +224,7 @@ xdentry *find_in_pdentry_unlock(xdentry *parent, path_name_t *name)
     dlist_t  *ch_head = &parent->children_list_head;
     list_for_each(list_node, ch_head){
         dentry_node = list_entry(list_node, xdentry, ch_at_parent_list);
-        if(strncmp((const char*)dentry_node->file_name.path_name,(const char*)name->path_name,name->len) == 0 &&(dentry_node->parent_dentry == parent)&&
-            (strlen((const char*)dentry_node->file_name.path_name) == name->len))
+        if(dentry_name_match(dentry_node,name))
         {
             printk(PT_RUN,"%s:%d,dentry_node->file_name.path_name=%s\n\r",__FUNCTION__,__LINE__,dentry_node->file_name.path_name);
             return dentry_node;

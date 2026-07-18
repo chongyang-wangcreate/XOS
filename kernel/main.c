@@ -146,6 +146,7 @@ void start_init(char *array)
     while(1)
     {
         xos_sleep_ticks(10);
+        printk(PT_DEBUG,"%s:%d\n\r",__func__,__LINE__);
     }
 }
 

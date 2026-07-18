@@ -101,6 +101,7 @@ void page_fault(struct task_struct *tsk,uint64_t vaddr)
         printk(PT_ERROR,"%s:%d,vaddr=%lx\n\r",__FUNCTION__,__LINE__,vaddr);
         return ;
     }
+    printk(PT_ERROR,"%s:%d,vaddr=%lx\n\r",__FUNCTION__,__LINE__,vaddr);
     user_page_mapping(tsk->task_pgd, (void *)vaddr,
     phy_addr,
     PAGE_SIZE,
@@ -132,7 +133,7 @@ void do_el0_sync(struct pt_regs *regs,uint64_t addr, uint64_t esr)
 
     struct task_struct *cur_task = get_current_task();
     
-    printk(PT_RUN,"%s:%d，vaddr=%lx ,esr=%lx\n\r",__FUNCTION__,__LINE__,addr,esr);
+    printk(PT_DEBUG,"%s:%d，vaddr=%lx ,esr=%lx\n\r",__FUNCTION__,__LINE__,addr,esr);
     show_pt_regs(regs);
     if (is_svc_st(esr)){
         syscallno = get_syscall_no(regs);
@@ -141,6 +142,7 @@ void do_el0_sync(struct pt_regs *regs,uint64_t addr, uint64_t esr)
         regs->regs[0] = ret;
     }else if(is_user_data_abort(esr)){
         show_pt_regs(regs);
+        printk(PT_ERROR,"%s:%d vaddr=%lx, esr=%lx\n\r",__FUNCTION__,__LINE__,addr,esr);
         page_fault(cur_task,addr);
 
     }else if(is_kernel_data_abort(esr)){

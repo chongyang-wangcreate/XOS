@@ -289,6 +289,8 @@ void *mem_cache_alloc(int size)
     if(size > mem_size_set[6].cache_bsize){
 
         mem_ptr = xos_get_free_page(0, 0);
+        printk(PT_DEBUG,"%s:%d,size=%d,mem_ptr=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)mem_ptr);
+
         return mem_ptr;
     }
 

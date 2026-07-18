@@ -159,7 +159,8 @@ int pud_map(pgd_t *pgd_p, u64 vaddr, u64 end, u64 paddr, u64 attr)
     u64 idx;
     u64 virt_pud_next;
 //    virt_pud_end = ALIGN_UP(vaddr + size, PAGE_SIZE);
-    if(!*pgd){
+    if(!*pgd)
+{
         /*
             pud is not exist
         */
@@ -219,13 +220,27 @@ int pgd_map(pgd_t *pgd_p,u64 vaddr,u64 paddr,u64 size,u64 attr)
 }
 
 
-
 static inline void flush_tlb (void)
 {
     asm("tlbi vmalle1" : : :);
 }
 
+static inline int pt_entry_is_table(uint64_t entry)
+{
+    return ((entry & (PT_ENTRY_TABLE | PT_ENTRY_VALID)) == (PT_ENTRY_TABLE | PT_ENTRY_VALID));
 
+}
+
+static inline int pt_entry_is_valid(uint64_t entry)
+{
+    return ((entry & PT_ENTRY_VALID) == PT_ENTRY_VALID);
+}
+
+static inline int linear_addr_valid(const void *ptr)
+{
+
+    return (((uint64_t)ptr) >= VA_KERNEL_START);
+}
 int xos_pages_map(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot)
 {
     xos_3level_maps(pgdir, va,size, pa,  prot);
@@ -502,8 +517,12 @@ int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa,
         
         pgd = &pgdir[PGD_IDX((uint64)start)];  /*开始本来想直接使用*pgdir[PGD_IDX(uint64)va]&PG_4k_ADDR_MASK，太长了不美观*/
         
-        if(*pgd & (PT_ENTRY_TABLE | PT_ENTRY_VALID)){ /*判断一级页表页表项项是否有效*/
+        if(pt_entry_is_table(*pgd)){ /*判断一级页表页表项项是否有效*/
             pmd_array_base = (pmd_t*) P2V((*pgd) & PG_4k_ADDR_MASK);
+        }else if(pt_entry_is_valid(*pgd)){
+            printk(PT_RUN,"%s:%d,pgd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pgd,
+         (unsigned long )start);
+          return -1;
         }else{
             /*
                 无效 申请页表空间，并将页表基地址放入pmd 对应的页表项中
@@ -521,9 +540,13 @@ int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa,
             二级页表空间在上面已经申请完毕，下面开始初始化二级页表pmd
         */
         pmd = &pmd_array_base[PMD_IDX(start)]; /*根据虚拟地址找到对应的pmd 项地址*/
-        if (*pmd & (PT_ENTRY_TABLE | PT_ENTRY_VALID)) /*判断二级页表页表项是否有效*/
+        if (pt_entry_is_table(*pmd)) /*判断二级页表页表项是否有效*/
         {
             pte_array_base = (pte_t*) P2V((*pmd) & PG_4k_ADDR_MASK);
+        }else if(pt_entry_is_valid(*pmd)){
+            printk(PT_RUN,"%s:%d,pgd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pgd,
+            (unsigned long )start);
+            return -1;
         }else{
             pte_array_base = (pte_t*) boot_alloc_virt(4096);
             
@@ -565,8 +588,12 @@ int xos_3level_one_pagemap (pgd_t *pgdir, void *va,  unsigned long pa, uint64 pr
     {
         pgd = &pgdir[PGD_IDX((uint64)start)];  /*开始本来想直接使用*pgdir[PGD_IDX(uint64)va]&PG_4k_ADDR_MASK，太长了不美观*/
         
-        if(*pgd & (PT_ENTRY_TABLE | PT_ENTRY_VALID)){ /*判断一级页表页表项项是否有效*/
+        if(pt_entry_is_table(*pgd)){ /*判断一级页表页表项项是否有效*/
             pmd_array_base = (pmd_t*) P2V((*pgd) & PG_4k_ADDR_MASK);
+        }else if(pt_entry_is_valid(*pgd)){
+
+          printk(PT_RUN,"%s:%d,pgd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pgd,(unsigned long )start);
+          return -1;
         }else{
             /*
                 无效 申请页表空间，并将页表基地址放入pmd 对应的页表项中
@@ -585,9 +612,13 @@ int xos_3level_one_pagemap (pgd_t *pgdir, void *va,  unsigned long pa, uint64 pr
             二级页表空间在上面已经申请完毕，下面开始初始化二级页表pmd
         */
         pmd = &pmd_array_base[PMD_IDX(start)]; /*根据虚拟地址找到对应的pmd 项地址*/
-        if (*pmd & (PT_ENTRY_TABLE | PT_ENTRY_VALID)) /*判断二级页表页表项是否有效*/
+        if (pt_entry_is_table(*pmd)) /*判断二级页表页表项是否有效*/
         {
             pte_array_base = (pte_t*) P2V((*pmd) & PG_4k_ADDR_MASK);
+        }else if(pt_entry_is_valid(*pmd)){
+            printk(PT_RUN,"%s:%d,pgd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pgd,
+            (unsigned long )start);
+            return -1;
         }else{
             pte_array_base = (pte_t*) xos_get_free_page(0,0);
             printk(PT_RUN,"%s:%d,pte_array_phy_base=%lx\n\r",__FUNCTION__,__LINE__,V2P(pte_array_base));
