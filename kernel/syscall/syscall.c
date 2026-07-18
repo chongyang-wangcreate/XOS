@@ -84,7 +84,6 @@ int do_syscall_read(struct pt_regs *regs){
     int fd = regs->regs[0];
     void *buf = (void*)regs->regs[1];    
     ssize_t count = regs->regs[2];
-    printk(PT_RUN,"%s:%d,fd=%d\n\r",__FUNCTION__,__LINE__,fd);
     ret = do_sys_read(fd,buf,count);
     return ret;
 }

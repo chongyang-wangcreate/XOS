@@ -192,9 +192,11 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
     
     struct task_struct *child = (struct task_struct *)xos_get_free_page(0,1);
     stack = (thread_union_t *)xos_get_free_page(0,1);
-    if(stack == NULL){
+    if(child == NULL || stack == NULL){
         goto alloc_stack_faild;
     }
+    memset(child,0,sizeof(*child));
+    memset(stack,0,sizeof(*stack));
     stack->thread_val.p_task = child;
 #ifdef old
     struct task_struct *child = xos_get_kern_page();
@@ -260,7 +262,7 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
 
     arch_local_irq_disable();
     add_to_cpu_runqueue(cpuid,child);
-    arch_local_irq_disable();
+    arch_local_irq_enable();
 
 //	add_to_g_list(child);
 alloc_stack_faild:

@@ -178,8 +178,7 @@ void kernel_init (void)
     xos_zone_init();
     mem_cache_init();
    // test_buddy();
-    xos_uart_puts("Hello from kernel_init 4\n");
-    test_printk(PT_DEBUG);
+
    // printk(PT_DEBUG,"it is ok");
     test_ptr = (char *)xos_get_free_page(0,1);
     put_hex((uint64)test_ptr);
@@ -199,7 +198,6 @@ void kernel_init (void)
         已引入128优先级
         后续实现多种调度策略，当前是实现越简单越好
     */
-    xos_thread_create(1, (unsigned long)&kernel_thread2, 7);
     xos_thread_create(5, (unsigned long)&kernel_idle, 6);
     xos_thread_create(2, (unsigned long)&start_init, 6);
     xos_uart_puts("Hello from kernel_init 6\n");

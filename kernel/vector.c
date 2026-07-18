@@ -92,9 +92,14 @@ static inline uint64 get_syscall_no(struct pt_regs *regs)
 
 void page_fault(struct task_struct *tsk,uint64_t vaddr)
 {
-    uint64_t phy_addr = (uint64_t)xos_get_phy(0, 0);
     if(tsk == NULL){
-        printk(PT_RUN,"%s:%d,vaddr=%lx phyaddr=%x\n\r",__FUNCTION__,__LINE__,vaddr,phy_addr);
+        printk(PT_ERROR,"%s:%d,vaddr=%lx\n\r",__FUNCTION__,__LINE__,vaddr);
+        return;
+    }
+    uint64_t phy_addr = (uint64_t)xos_get_user_phy(0, 0);
+    if(phy_addr == 0){
+        printk(PT_ERROR,"%s:%d,vaddr=%lx\n\r",__FUNCTION__,__LINE__,vaddr);
+        return ;
     }
     user_page_mapping(tsk->task_pgd, (void *)vaddr,
     phy_addr,
@@ -135,10 +140,15 @@ void do_el0_sync(struct pt_regs *regs,uint64_t addr, uint64_t esr)
         ret = sys_call_entry(syscallno,regs);
         regs->regs[0] = ret;
     }else if(is_user_data_abort(esr)){
+        show_pt_regs(regs);
         page_fault(cur_task,addr);
 
     }else if(is_kernel_data_abort(esr)){
-        printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
+        show_pt_regs(regs);
+        printk(PT_ERROR,"%s:%d vaddr=%lx, esr=%lx\n\r",__FUNCTION__,__LINE__,addr,esr);
+    }else{
+        printk(PT_ERROR,"%s:%d vaddr=%lx, esr=%lx\n\r",__FUNCTION__,__LINE__,addr,esr);
+        show_pt_regs(regs);
     }
 
     /*
