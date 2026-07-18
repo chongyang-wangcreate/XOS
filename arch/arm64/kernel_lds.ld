@@ -38,7 +38,7 @@ SECTIONS {
 
     . = ALIGN(4096);
 
-    /* ---------- 主代码段（.text）---------- */
+    
     .text : AT(ADDR(.text) - 0xffffff8000000000) {
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).text)
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).text.*)
@@ -46,13 +46,13 @@ SECTIONS {
     ktext_end = .;
     _etext = .;
 
-    /* ---------- 只读数据 ---------- */
+   
     .rodata : AT(ADDR(.rodata) - 0xffffff8000000000) {
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).rodata)
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).rodata.*)
     }
 
-    /* ---------- 数据段 ---------- */
+    
     .data : AT(ADDR(.data) - 0xffffff8000000000) {
         _sdata = .;
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).data)
@@ -60,7 +60,7 @@ SECTIONS {
         _edata = .;
     }
 
-    /* ---------- BSS 段 + 栈 ---------- */
+    
     . = ALIGN(4096);
     .bss : AT(ADDR(.bss) - 0xffffff8000000000) {
         __bss_start = .;
@@ -71,7 +71,7 @@ SECTIONS {
 
     }
     __bss_stop = .;
-     /* ========== 内核预留区域（栈、页表、内存池等）========== */
+     
     . = ALIGN(4096);
     __init_begin = .;
     .kernel_reserved : AT(ADDR(.kernel_reserved) - 0xffffff8000000000) {
@@ -104,34 +104,34 @@ SECTIONS {
         . += 0x200000;          /* 2MB */
         PROVIDE(_zone_metadata_end = .);
 
-        /* 内核页描述符数组 */
+       
         . = ALIGN(4096);
         PROVIDE(_kernel_page_array_start = .);
         PROVIDE(_kernel_page_array = .);
         . += KERNEL_PAGE_ARRAY_SIZE;
         PROVIDE(_kernel_page_array_end = .);
 
-        /* 用户页描述符数组 */
+        
         . = ALIGN(4096);
         PROVIDE(_user_page_array_start = .);
         PROVIDE(_user_page_array = .);
         . += USER_PAGE_ARRAY_SIZE;
         PROVIDE(_user_page_array_end = .);
 
-        /* DMA 页描述符数组 */
+        
         . = ALIGN(4096);
         PROVIDE(_dma_page_array_start = .);
         PROVIDE(_dma_page_array = .);
         . += DMA_PAGE_ARRAY_SIZE;
         PROVIDE(_dma_page_array_end = .);
 
-        /* 所有页描述符结束 */
+        
         . = ALIGN(4096);
         PROVIDE(_page_arrays_end = .);
     }
     __init_end = .;
     PROVIDE(kernel_end = ADDR(.kernel_reserved) + SIZEOF(.kernel_reserved));
-    /* ========== 物理地址符号========== */
+    
     kernel_end_phys = kernel_end - 0xffffff8000000000;
     __bss_start_phys = __bss_start - 0xffffff8000000000;
     __bss_end_phys = __bss_end - 0xffffff8000000000;
@@ -174,7 +174,7 @@ SECTIONS {
     }
     PROVIDE(_user_data_saddr = user_data_start);
     PROVIDE(_user_data_eaddr = user_data_end);
-    PROVIDE(_user_rodata_lma = LOADADDR(.user_data));
+    PROVIDE(_user_data_lma = LOADADDR(.user_data));
 
     .user_bss : AT(ALIGN(LOADADDR(.user_data) +SIZEOF(.user_data), PAGE_SIZE)) {
         PROVIDE(user_bss_start = .);
@@ -185,6 +185,7 @@ SECTIONS {
     }
     PROVIDE(_user_bss_saddr = user_bss_start);
     PROVIDE(_user_bss_eaddr = user_bss_end);
+    PROVIDE(_user_bss_lma = LOADADDR(.user_bss));
     PROVIDE (_user_vma = _user_text_saddr);
     PROVIDE (_user_lma = _user_text_lma);
 
@@ -197,6 +198,7 @@ SECTIONS {
     PROVIDE(_page_arrays_end_phys = _page_arrays_end - 0xffffff8000000000);
     /DISCARD/ : {
         *(.comment)
+        *(.eh_frame)
     }
 }
 

@@ -73,8 +73,12 @@ extern void add_to_cpu_runqueue(int cpuid,struct task_struct *task);
 
 extern uint64 _user_lma[];
 extern uint64 _user_vma[];
+extern uint64 _user_rodata_lma[];
+extern uint64 _user_data_lma[];
+extern uint64 _user_bss_lma[];
 
-
+#define LOAD_LINKER_SYM(sym,out) \
+    __asm__ __volatile__("ldr %0, =" #sym"\n\t" : "=r"(out))
 
 #ifndef CONFIG_PLAN2
 /*
@@ -203,6 +207,7 @@ void user_page_mapping(uint64_t *pg_dir, void *virt_addr,
 
     char *addr;
     int i;
+    void *page_phy;
     if (pg_dir == NULL) {
         printk(PT_RUN,"%s: pg_dir is null\n", __FUNCTION__);
         return;
@@ -210,11 +215,25 @@ void user_page_mapping(uint64_t *pg_dir, void *virt_addr,
     if (phy_addr == (0xffffffffffffffff)) {
         printk(PT_DEBUG,"%s: pg_dir is null\n", __FUNCTION__);
         addr = (char*) align_down(virt_addr, PTE_ENTRY_SIZE);
-        phy_addr = (uint64_t)xos_get_phy(0, 0);
+        page_phy = xos_get_user_phy(0, 0);
+        if(page_phy == NULL){
+
+            printk(PT_RUN,"%s:no user page for va=%lx\n",__FUNCTION__,(uint64_t)addr);
+            return ;
+        }
+        phy_addr = (uint64_t)page_phy;
         for(i = 0; i < size ;i += PAGE_SIZE){
-            map_page(pg_dir, virt_addr, size, (uint64)phy_addr,PG_RW_EL1_EL0);
-            addr += PAGE_SIZE;
-            phy_addr = (uint64_t)xos_get_phy(0, 0);
+            map_page(pg_dir, addr, size, (uint64)phy_addr,PG_RW_EL1_EL0);
+            addr += PAGE_SIZE;  
+            if(i + PAGE_SIZE >= size){
+                break;
+            }
+            page_phy = xos_get_user_phy(0, 0);
+            if(page_phy == NULL){
+                printk(PT_RUN,"%s:no user page for va=%lx\n",__FUNCTION__,(uint64_t)addr);
+                return ;
+            }
+            phy_addr = (uint64_t)page_phy;
         }
         printk(PT_RUN,"%s: phy_addr=%lx\n", __FUNCTION__,(uint64)phy_addr);
     }else{
@@ -252,12 +271,21 @@ void vma_space_maps(struct task_struct *t)
 
 void init_mm(struct mm_struct* mm)
 {
+    uint64 user_text_start;
+    uint64 user_text_end;
+    uint64 user_data_start;
+    uint64 user_data_end;
+
+    LOAD_LINKER_SYM(_user_text_saddr,user_text_start);
+    LOAD_LINKER_SYM(_user_text_eaddr,user_text_end);
+    LOAD_LINKER_SYM(_user_data_saddr,user_data_start);
+    LOAD_LINKER_SYM(_user_data_eaddr,user_data_end);
     mm->mmap_count = 0;
-    mm->start_code = (unsigned long)USER_TEXT_SADDR;
-    mm->end_code = (unsigned long)USER_TEXT_EADDR;
+    mm->start_code = user_text_start;
+    mm->end_code = user_text_end;
     
-    mm->start_data = (unsigned long)USER_DATA_SADDR;
-    mm->end_data = (unsigned long)USER_DATA_EADDR;
+    mm->start_data = user_data_start;
+    mm->end_data = user_data_end;
     
     xos_spinlock_init(&mm->mm_lock);
 
@@ -266,10 +294,7 @@ void init_mm(struct mm_struct* mm)
 uint64_t get_user_entry()
 {
     uint64_t user_entry_addr;
-    asm volatile (
-        "ldr %0, = shell_main\n\t"
-        : "=r" (user_entry_addr)
-    );
+    LOAD_LINKER_SYM(shell_main,user_entry_addr);
     return user_entry_addr;
 }
 void init_ucontext(struct pt_regs * cur_regs, void *pc, void *sp) {
@@ -281,12 +306,12 @@ void init_ucontext(struct pt_regs * cur_regs, void *pc, void *sp) {
 int create_data_vma(struct task_struct *cur_task,uint64 usr_phy_start)
 {
     int ret = 0;
-    uint64 *user_data_start;
-    uint64 *user_data_end;
-    user_data_start = V_TO_POINTER(USER_DATA_SADDR);
-    user_data_end = V_TO_POINTER(USER_DATA_EADDR);
-    ret = create_vma(cur_task, (uint64)user_data_start,
-     (uint64)user_data_end,
+    uint64 user_data_start;
+    uint64 user_data_end;
+    LOAD_LINKER_SYM(_user_data_saddr,user_data_start);
+    LOAD_LINKER_SYM(_user_data_eaddr,user_data_end);
+    ret = create_vma(cur_task, user_data_start,
+     user_data_end,
      (uint64)(usr_phy_start), VM_READ | VM_WRITE );
     if (ret < 0) {
         printk(PT_RUN,"create_vma for user rodata failed\n");
@@ -299,13 +324,13 @@ int create_data_vma(struct task_struct *cur_task,uint64 usr_phy_start)
 int create_rodata_vma(struct task_struct *cur_task,uint64 usr_phy_start)
 {
     int ret = 0;
-    int *user_rodata_start;
-    int *user_rodata_end;
-    user_rodata_start = V_TO_POINTER(USER_RODATA_SADDR);
-    user_rodata_end = V_TO_POINTER(USER_RODATA_EADDR);
-    ret = create_vma(cur_task, (uint64)user_rodata_start,
-     (uint64)user_rodata_end,
-     (uint64)(usr_phy_start), VM_READ | VM_SHARED);
+    uint64 user_rodata_start;
+    uint64 user_rodata_end;
+    LOAD_LINKER_SYM(_user_rodata_saddr,user_rodata_start);
+    LOAD_LINKER_SYM(_user_rodata_eaddr,user_rodata_end);
+    ret = create_vma(cur_task, user_rodata_start,
+     user_rodata_end,
+     (uint64)(usr_phy_start), VM_READ | VM_SHARED );
     if (ret < 0) {
         printk(PT_RUN,"create_vma for user rodata failed\n");
         ret = -ERODATA_VMA; 
@@ -315,12 +340,12 @@ int create_rodata_vma(struct task_struct *cur_task,uint64 usr_phy_start)
 int create_text_vma(struct task_struct *cur_task,uint64 usr_phy_start)
 {
     int ret = 0;
-    uint64 *user_text_start;
-    uint64 *user_text_end;
-    user_text_start = V_TO_POINTER((uint64)USER_TEXT_SADDR);
-    user_text_end = V_TO_POINTER((uint64)USER_TEXT_EADDR);
-    ret = create_vma(cur_task, (uint64)user_text_start,
-     (uint64)user_text_end,
+    uint64 user_text_start;
+    uint64 user_text_end;
+    LOAD_LINKER_SYM(_user_text_saddr,user_text_start);
+    LOAD_LINKER_SYM(_user_text_eaddr,user_text_end);
+    ret = create_vma(cur_task, user_text_start,
+     user_text_end,
      (uint64)usr_phy_start, VM_READ | VM_EXEC | VM_SHARED);
     if (ret < 0) {
         printk(PT_RUN,"create_vma for user text failed\n");
@@ -331,12 +356,12 @@ int create_text_vma(struct task_struct *cur_task,uint64 usr_phy_start)
 int create_bss_vma(struct task_struct *cur_task,uint64 usr_phy_start)
 {
     int ret = 0;
-    uint64 *user_bss_start;
-    uint64 *user_bss_end;
-    user_bss_start = V_TO_POINTER((uint64)USER_BSS_SADDR);
-    user_bss_end = V_TO_POINTER((uint64)USER_BSS_EADDR);
-    ret = create_vma(cur_task, (uint64)user_bss_start,
-        (uint64)user_bss_end,
+    uint64 user_bss_start;
+    uint64 user_bss_end;
+    LOAD_LINKER_SYM(_user_bss_saddr,user_bss_start);
+    LOAD_LINKER_SYM(_user_bss_eaddr,user_bss_end);
+    ret = create_vma(cur_task, user_bss_start,
+        user_bss_end,
         (uint64)(usr_phy_start), VM_READ | VM_WRITE);
     if (ret < 0) {
         printk(PT_RUN,"setup_vma for user bss failed\n");
@@ -392,48 +417,54 @@ int create_dev_vma(struct task_struct *cur_task,uint64 dev_start,uint64 dev_end,
 int create_process_vma(struct task_struct *cur_task)
 {
     int ret = 0;
-    uint64 user_pma_start;
+
     uint64 user_vma;
 //    uint64 vma_access;
     
+
+
+    uint64 user_pma_start;
     uint64 user_text_start;
-    uint64 user_rodata_start;
-    uint64 user_data_start;
-    uint64 user_bss_start;
+    uint64 user_rodata_lma;
+    uint64 user_data_lma;
+    uint64 user_bss_lma;
     uint64 user_bss_end;
 
 //    user_pma_start = V_TO_P(_user_lma);
 //    user_vma = V_TO_P(_user_vma);
-    user_pma_start = V_TO_P((uint64)_user_text_saddr);   // 用户映像的物理加载地址
-    user_vma = (uint64)_user_text_saddr;                 // 用户映像的虚拟地址        
+//    user_pma_start = V_TO_P((uint64)_user_text_saddr);   // 用户映像的物理加载地址
+//    user_vma = (uint64)_user_text_saddr;                 // 用户映像的虚拟地址        
+    LOAD_LINKER_SYM(_user_text_lma,user_pma_start);
+    LOAD_LINKER_SYM(_user_text_saddr,user_text_start);
+    LOAD_LINKER_SYM(_user_rodata_lma,user_rodata_lma);
+    LOAD_LINKER_SYM(_user_data_lma,user_data_lma);
+    LOAD_LINKER_SYM(_user_bss_lma,user_bss_lma);
+    user_vma = user_text_start;
+    LOAD_LINKER_SYM(_user_bss_eaddr,user_bss_end);
     printk(PT_RUN,"lma_user=%p\n", user_pma_start);
     printk(PT_RUN,"vma_user=%p\n", user_vma);
     uint64 user_stack_start = (USER_STACK_TOP - USER_STACK_SIZE +1);
     uint64 user_stack_end = (USER_STACK_TOP);
 
 
-    user_text_start = V_TO_P((uint64)USER_TEXT_SADDR);
-    user_rodata_start = V_TO_P((uint64)USER_RODATA_SADDR);
-    user_data_start = V_TO_P((uint64)USER_DATA_SADDR);
-    user_bss_start = V_TO_P((uint64)USER_BSS_SADDR);
-    user_bss_end = V_TO_P((uint64)USER_BSS_EADDR);
+
 
     ret = create_text_vma(cur_task,user_pma_start);
     if(ret < 0){
          printk(PT_DEBUG,"%s:%d\n",__FUNCTION__,__LINE__);
         return ret;
     }
-    ret = create_rodata_vma(cur_task, GET_PHY_START(user_pma_start,user_rodata_start,user_text_start));
+    ret = create_rodata_vma(cur_task, user_rodata_lma);
     if(ret < 0){
          printk(PT_DEBUG,"%s:%d\n",__FUNCTION__,__LINE__);
         return ret;
     }
-    ret = create_data_vma(cur_task,GET_PHY_START(user_pma_start,user_data_start,user_text_start));
+    ret = create_data_vma(cur_task,user_data_lma);
     if(ret < 0){
          printk(PT_DEBUG,"%s:%d\n",__FUNCTION__,__LINE__);
         return ret;
     }
-    ret = create_bss_vma(cur_task,GET_PHY_START(user_pma_start,user_bss_start,user_text_start));
+    ret = create_bss_vma(cur_task,user_bss_lma);
     if(ret < 0){
          printk(PT_DEBUG,"%s:%d\n",__FUNCTION__,__LINE__);
         return ret;

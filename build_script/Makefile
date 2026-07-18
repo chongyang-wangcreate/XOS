@@ -31,6 +31,7 @@ CFLAGS := \
     -I./usr \
    # -nostdinc
 LDFLAGS = -L. -L/mm -L./kernel/init -L./kernel -L./arch/arm64
+
 ASFLAGS = -march=armv8-a
 
 LIBGCC = $(shell $(CC) -print-libgcc-file-name)
