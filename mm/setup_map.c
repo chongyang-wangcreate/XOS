@@ -584,6 +584,7 @@ int xos_3level_one_pagemap (pgd_t *pgdir, void *va,  unsigned long pa, uint64 pr
     pmd_t *pmd;
     pte_t *pte_array_base;
     pte_t *pte;
+    printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
     start = va;
     {
         pgd = &pgdir[PGD_IDX((uint64)start)];  /*开始本来想直接使用*pgdir[PGD_IDX(uint64)va]&PG_4k_ADDR_MASK，太长了不美观*/
@@ -592,14 +593,18 @@ int xos_3level_one_pagemap (pgd_t *pgdir, void *va,  unsigned long pa, uint64 pr
             pmd_array_base = (pmd_t*) P2V((*pgd) & PG_4k_ADDR_MASK);
         }else if(pt_entry_is_valid(*pgd)){
 
-          printk(PT_RUN,"%s:%d,pgd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pgd,(unsigned long )start);
+          printk(PT_DEBUG,"%s:%d,pgd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pgd,(unsigned long )start);
           return -1;
         }else{
             /*
                 无效 申请页表空间，并将页表基地址放入pmd 对应的页表项中
             */
             pmd_array_base = (pmd_t*)xos_get_free_page(0,0);
-            printk(PT_RUN,"%s:%d,pmd_array_base=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)pmd_array_base);
+            if(!pmd_array_base || !linear_addr_valid(pmd_array_base)){
+
+                return -1;
+            }
+            printk(PT_DEBUG,"%s:%d,pmd_array_base=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)pmd_array_base);
 
             memset(pmd_array_base, 0, PTE_ENTRY_SIZE);
             /*
@@ -616,12 +621,15 @@ int xos_3level_one_pagemap (pgd_t *pgdir, void *va,  unsigned long pa, uint64 pr
         {
             pte_array_base = (pte_t*) P2V((*pmd) & PG_4k_ADDR_MASK);
         }else if(pt_entry_is_valid(*pmd)){
-            printk(PT_RUN,"%s:%d,pgd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pgd,
+            printk(PT_DEBUG,"%s:%d,pgd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pgd,
             (unsigned long )start);
             return -1;
         }else{
             pte_array_base = (pte_t*) xos_get_free_page(0,0);
-            printk(PT_RUN,"%s:%d,pte_array_phy_base=%lx\n\r",__FUNCTION__,__LINE__,V2P(pte_array_base));
+            if(!pte_array_base || !linear_addr_valid(pte_array_base)){
+                return -1;
+            }
+            printk(PT_DEBUG,"%s:%d,pte_array_phy_base=%lx\n\r",__FUNCTION__,__LINE__,V2P(pte_array_base));
             memset(pte_array_base, 0, PTE_ENTRY_SIZE);
 
             *pmd = LINEAR_V2P_UL(pte_array_base) | PT_ENTRY_TABLE | PT_ENTRY_VALID;
@@ -633,10 +641,7 @@ int xos_3level_one_pagemap (pgd_t *pgdir, void *va,  unsigned long pa, uint64 pr
             配置相应的三级页表项
         */
         *pte = pa | ACCESS_FLAG | SH_IN_SH | prot | NON_SECURE_PA | PT_ATTRINDX(MT_NORMAL) | PT_ENTRY_PAGE | PT_ENTRY_VALID;
-
-
     }
-
     return 0;
 
 }
