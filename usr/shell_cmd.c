@@ -279,15 +279,20 @@ int cat_cmd(int argc, char*argv[]){
 
 int pwd_cmd(int argc, char*argv[]){
     char pwd_buf[256];
+    int ret;
     /*
         check parampter
     */
     if(argc != 1){
         return -1;
     }
-
-    SYS_CALL_DEF2(NR_PWD,(uint64_t)pwd_buf, (uint64_t)256);
-    return 0;
+    user_memset(pwd_buf,0,sizeof(pwd_buf));
+    ret = SYS_CALL_DEF2(NR_PWD,(uint64_t)pwd_buf, (uint64_t)sizeof(pwd_buf));
+    if(ret < 0){
+        return ret;
+    }
+    printf("%s\n\r",pwd_buf);
+    return ret;
 }
 
 int cd_cmd(int argc, char*argv[]){

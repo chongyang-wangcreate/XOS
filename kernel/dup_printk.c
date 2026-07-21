@@ -19,7 +19,7 @@
 #define false 0
 #define INT_MAX		((int32_t)(~0U>>1))
 char format_buf[256];
-#define default_message_loglevel 4
+
 
 typedef char int8_t;
 typedef int bool;
@@ -1666,7 +1666,7 @@ void _k_puts (char *s)
 
 void test_printk(int level)
 {
-    if(level <= PT_RUN){
+    if(level <= PT_WARRING){
 		
 		_k_puts("self-test \n\r");
 
@@ -1696,7 +1696,7 @@ uint32 printk(int level,const char *fmt, ...)
 //	p = format_buf;
     
 	va_end(args);
-    if(level < PT_RUN){
+    if(level <= PT_WARRING){
         _k_puts (format_buf);
     }
 	return len;

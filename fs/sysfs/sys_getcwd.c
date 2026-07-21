@@ -88,6 +88,8 @@ int sys_getcwd_org(char *user_buf,int buf_size)
 int do_sys_getcwd(char *user_buf,int buf_size)
 {
     int i = 0;
+    int j;
+    int copy_len;
     char path_name[512] = {0};
     char path_buf[12][128] = {0};
     struct xos_dentry  *dentry_node;
@@ -96,6 +98,10 @@ int do_sys_getcwd(char *user_buf,int buf_size)
     struct xos_dentry  *root_dentry;
     xmount_t  *root_mnt;
     struct task_struct *cur_task = get_current_task();
+    if(user_buf == NULL || buf_size <= 0){
+
+        return -1;
+    }
     dentry_node = cur_task->fs_context.curr_dentry;
     dentry_mnt = cur_task->fs_context.curr_dentry_mount;
     root_dentry = cur_task->fs_context.root_dentry;
@@ -106,7 +112,6 @@ int do_sys_getcwd(char *user_buf,int buf_size)
     
     printk(PT_RUN,"root_dentry->file_name = %s\n\r",root_dentry->file_name.path_name);
     printk(PT_RUN,"root_mnt.mount_point = %s\n\r",root_mnt->mount_point->file_name.path_name);
-
     while((dentry_node != root_dentry) ||(dentry_mnt != root_mnt))
     {
 
@@ -144,23 +149,33 @@ int do_sys_getcwd(char *user_buf,int buf_size)
             }
             
         }
+        if(i >= 12){
+            return -1;
+        }
          strcpy(path_buf[i],(const char*)(dentry_node->file_name.path_name));
          dentry_node = dentry_node->parent_dentry;
          i++;
         printk(PT_RUN," %s:%d,dentry_node->path_name=%s\n\r",__FUNCTION__,__LINE__,dentry_node->file_name.path_name);
     }
+    if(i == 0){
+        strcpy(path_name,"/");
+    }else{
+        for(j = i -1 ;j >=0;j--){
 
-    for(;i >=0 ;i--){
-        strcat(path_name, path_buf[i]);
-        if(strcmp(path_buf[i],"/")){
-            strcat(path_name, "/");
+            strcat(path_name,"/");
+            strcat(path_name,path_buf[j]);
         }
+        
     }
-    
-    printk(PT_DEBUG,"path_name = %s\n\r",path_name);
 
+//    printk(PT_WARRING,"path_name = %s\n\r",path_name);
+    copy_len = strlen(path_name) + 1;
+    if(copy_len > buf_size){
+        return -1;
+    }
 
-    return 0;
+    memcpy(user_buf,path_name,copy_len); //wo temporarily use memcpy
+    return copy_len;
 }
 
 

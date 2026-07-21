@@ -60,7 +60,9 @@ extern void add_to_cpu_runqueue(int cpuid,struct task_struct *task);
 
 #define USER_STACK_SIZE 0x800000
 
-#define USER_STACK_TOP    ((1UL << VA_BITS) - USER_STACK_SIZE -1)
+#define USER_STACK_TOP    (1UL << VA_BITS)
+#define USER_STACK_START  (USER_STACK_TOP - USER_STACK_SIZE)
+#define USER_STACK_INIT_SP (USER_STACK_TOP & ~0xfUL)
 
 #define USER_HEAP_START 0x10000000
 #define USER_HEAD_END   0x20000000
@@ -445,7 +447,7 @@ int create_process_vma(struct task_struct *cur_task)
     LOAD_LINKER_SYM(_user_bss_eaddr,user_bss_end);
     printk(PT_DEBUG,"lma_user=%p\n", user_pma_start);
     printk(PT_DEBUG,"vma_user=%p\n", user_vma);
-    uint64 user_stack_start = (USER_STACK_TOP - USER_STACK_SIZE +1);
+    uint64 user_stack_start = USER_STACK_START;
     uint64 user_stack_end = (USER_STACK_TOP);
 
 
