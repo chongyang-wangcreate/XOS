@@ -19,6 +19,21 @@
 
 ********************************************************/
 
+/*
+
+    后续xos_get_page()第一个入参改成mode ,选择不同的mode ,会选择不同的zone 区域
+
+2024.11.22 20:21
+   zone.c 描述不应该存在budy 相关的大量定义，排版太乱需要重新做整理
+    
+*/
+
+
+/*
+    后续可以扩展成多个不同的zone 区域
+*/
+
+
 
 #include "types.h"
 #include "list.h"
@@ -37,25 +52,98 @@
 #include "uart.h"
 
 #define NORMAL_PAGE_SIZE (1 << 12)
+extern uint8_t _kernel_page_array_start[];
+extern uint8_t _kernel_page_array_end[];
+extern uint8_t _user_page_array_start[];
+extern uint8_t _user_page_array_end[];
+extern uint8_t _dma_page_array_start[];
+extern uint8_t _dma_page_array_end[];
 
-
-
-/*
-
-    后续xos_get_page()第一个入参改成mode ,选择不同的mode ,会选择不同的zone 区域
-
-2024.11.22 20:21
-   zone.c 描述不应该存在budy 相关的大量定义，排版太乱需要重新做整理
-    
-*/
 xos_zone_t zone_normal;
 xos_zone_t zone_dma;
 xos_zone_t zone_user;
-
-/*
-    后续可以扩展成多个不同的zone 区域
-*/
 xos_zone_t zone_areas[ZONE_MAX];
+
+static xos_zone_layout_t  zone_layouts[ZONE_MAX] = {
+
+    {
+        .zone_id = ZONE_KERNEL,
+        .name = "kernel",
+        .size = ZONE_KERNEL_SIZE,
+        .page_array = (xos_page_t*)_kernel_page_array_start,
+        .page_array_end = (xos_page_t*)_kernel_page_array_end,
+
+    },
+    {
+        .zone_id = ZONE_USER,
+        .name = "user",
+        .size = ZONE_USER_SIZE,
+        .page_array = (xos_page_t*)_user_page_array_start,
+        .page_array_end = (xos_page_t*)_dma_page_array_end,
+
+    },
+    {
+        .zone_id = ZONE_DMA,
+        .name = "dma",
+        .size = ZONE_DMA_SIZE,
+        .page_array = (xos_page_t*)_dma_page_array_start,
+        .page_array_end = (xos_page_t*)_kernel_page_array_end,
+
+    },
+};
+
+uint64 xos_get_zone_page_counts(const xos_zone_layout_t *layout)
+{
+    return ((uint64)layout->page_array_end - (uint64)layout->page_array) / sizeof(xos_page_t);
+
+}
+
+static void xos_build_zone_layout(void)
+{
+    uint64 start = ZONE_KERNEL_START;
+    int i;
+    for(i = 0; i < ZONE_MAX ;i++){
+        zone_layouts[i].start = start;
+        zone_layouts[i].end = start + zone_layouts[i].size - 1;
+        start = zone_layouts[i].end + 1;
+
+    }
+
+}
+
+const xos_zone_layout_t *xos_get_zone_layouts(int *count)
+{
+    if(count != NULL){
+        *count = ZONE_MAX;
+    }
+    return zone_layouts;
+
+}
+
+static void xos_zone_reset_pages(xos_zone_t *zone,int zone_id)
+{
+    uint32_t i;
+    for(i = 0; i < zone->z_pfn_cnt ; i++){
+        zone->z_vmempage[i].idle_flags = 0;
+        zone->z_vmempage[i].order = -1;
+        zone->z_vmempage[i].zone_type = zone_id;
+        zone->z_vmempage[i].ref_cnt = 0;
+        list_init(&zone->z_vmempage[i].list);
+    }
+
+}
+
+static void xos_zone_bind(xos_zone_t *zone,const xos_zone_layout_t *layout)
+{
+    zone->z_pfn_cnt = layout->size >> PAGE_SHIFT;
+    zone->z_vm_cnt = zone->z_pfn_cnt;
+    zone->z_vmempage = layout->page_array;
+    zone->free_pages = zone->z_pfn_cnt;
+    zone->start_pfn = layout->start >> PAGE_SHIFT;
+    zone->end_pfn = layout->end >> PAGE_SHIFT;
+    xos_spinlock_init(&zone->slock);
+    xos_zone_reset_pages(zone,layout->zone_id);
+}
 /*
     判断当前page 的伙伴是否空闲，如果空闲可以合并
     1. 找到当前Page 的伙伴
@@ -309,85 +397,19 @@ xos_zone_t zone_dma = {0};
 
 void zone_early_init(void)
 {
-    /* 验证内存布局 */
-    /*printk(PT_DEBUG,"Memory Layout:\n");
-    printk(PT_DEBUG,"  Kernel Zone: 0x%lx - 0x%lx (%d pages)\n", 
-           ZONE_KERNEL_START, ZONE_KERNEL_END, ZONE_KERNEL_PAGES);
-    printk(PT_DEBUG,"  User Zone:   0x%lx - 0x%lx (%d pages)\n", 
-           ZONE_USER_START, ZONE_USER_END, ZONE_USER_PAGES);
-    printk(PT_DEBUG,"  DMA Zone:    0x%lx - 0x%lx (%d pages)\n", 
-           ZONE_DMA_START, ZONE_DMA_END, ZONE_DMA_PAGES);*/
-    
-    /* 初始化内核zone（Normal Zone） */
-    zone_normal.z_pfn_cnt = ZONE_KERNEL_PAGES;
-    zone_normal.z_vmempage = (xos_page_t*)_kernel_page_array_start;
-    zone_normal.free_pages = ZONE_KERNEL_PAGES;
-    zone_normal.start_pfn = ZONE_KERNEL_START >> PAGE_SHIFT;
-    zone_normal.end_pfn = ZONE_KERNEL_END >> PAGE_SHIFT;
-    xos_spinlock_init(&zone_normal.slock);
-    
-    /*printk(PT_DEBUG,"Kernel Zone: z_vmempage at 0x%lx, pages: %d\n", 
-           (uintptr_t)zone_normal.z_vmempage, zone_normal.z_pfn_cnt);*/
-    
-    /* 初始化内核zone的所有页描述符 */
-    for (uint32_t i = 0; i < zone_normal.z_pfn_cnt; i++) {
-        zone_normal.z_vmempage[i].idle_flags = 0;  /* 空闲状态 */
-        zone_normal.z_vmempage[i].order = -1;      /* 未分配 */
-        zone_normal.z_vmempage[i].zone_type = ZONE_KERNEL;
-        zone_normal.z_vmempage[i].ref_cnt = 0;
-        list_init(&zone_normal.z_vmempage[i].list);
-    }
-    
-    /* 初始化用户zone */
-    zone_user.z_pfn_cnt = ZONE_USER_PAGES;
-    zone_user.z_vmempage = (xos_page_t*)_user_page_array_start;
-    zone_user.free_pages = ZONE_USER_PAGES;
-    zone_user.start_pfn = ZONE_USER_START >> PAGE_SHIFT;
-    zone_user.end_pfn = ZONE_USER_END >> PAGE_SHIFT;
-    xos_spinlock_init(&zone_user.slock);
-    
-    /*printk(PT_DEBUG,"User Zone: z_vmempage at 0x%lx, pages: %d\n", 
-           (uintptr_t)zone_user.z_vmempage, zone_user.z_pfn_cnt);*/
-    
-    for (uint32_t i = 0; i < zone_user.z_pfn_cnt; i++) {
-        zone_user.z_vmempage[i].idle_flags = 0;
-        zone_user.z_vmempage[i].order = -1;
-        zone_user.z_vmempage[i].zone_type = ZONE_USER;
-        zone_user.z_vmempage[i].ref_cnt = 0;
-        list_init(&zone_user.z_vmempage[i].list);
-    }
-    
-    /* 初始化DMA zone */
-    zone_dma.z_pfn_cnt = ZONE_DMA_PAGES;
-    zone_dma.z_vmempage = (xos_page_t*)_dma_page_array_start;
-    zone_dma.free_pages = ZONE_DMA_PAGES;
-    zone_dma.start_pfn = ZONE_DMA_START >> PAGE_SHIFT;
-    zone_dma.end_pfn = ZONE_DMA_END >> PAGE_SHIFT;
-    xos_spinlock_init(&zone_dma.slock);
-    put_hex((uint64)_dma_page_array_start);
-    xos_uart_puts("dma addr\n\r");
-    /*printk(PT_DEBUG,"DMA Zone: z_vmempage at 0x%lx, pages: %d\n", 
-           (uintptr_t)zone_dma.z_vmempage, zone_dma.z_pfn_cnt);*/
-    
-    for (uint32_t i = 0; i < zone_dma.z_pfn_cnt; i++) {
-        zone_dma.z_vmempage[i].idle_flags = 0;
-        zone_dma.z_vmempage[i].order = -1;
-        zone_dma.z_vmempage[i].zone_type= ZONE_DMA;
-        zone_dma.z_vmempage[i].ref_cnt = 0;
-        list_init(&zone_dma.z_vmempage[i].list);
-    }
-    
-    /* 初始化buddy系统 */
-   // printk(PT_DEBUG,"Initializing buddy allocator...\n");
-    /*buddy_init(&zone_normal, ZONE_KERNEL);
-    buddy_init(&zone_user, ZONE_USER);
-    buddy_init(&zone_dma, ZONE_DMA);*/
+    int i;
+    xos_zone_t *zones[ZONE_MAX] = {
 
-    xos_insert_to_buddy(&zone_normal);
-    xos_insert_to_buddy(&zone_user);
-    xos_insert_to_buddy(&zone_dma);
-    
-   // printk(PT_DEBUG,"Zone initialization completed.\n");
+        &zone_normal,
+        &zone_user,
+        &zone_dma,
+    };
+    xos_build_zone_layout();
+    for(i = 0; i < ZONE_MAX ; i++){
+
+        xos_zone_bind(zones[i],&zone_layouts[i]);
+        xos_insert_to_buddy(zones[i]);
+    }
 }
 /*
     使用平坦模型思想，开发自己的buddy 子系统,当前实现比较简单,本阶段暂时是实现基本功能，后续
@@ -424,14 +446,6 @@ void zone_init(xos_zone_t * zone_area, int zone_id)
 
 }
 
-void mem_init()
-{
-
-    zone_init(&zone_areas[ZONE_KERNEL], 0);
-    zone_init(&zone_areas[ZONE_USER], 0);
-    zone_init(&zone_areas[ZONE_DMA], 0);
-
-}
 
 
 int  single_zone_init(uint32 phy_page_start,uint32 phy_page_end, uint32_t zone_phy_start,uint32_t zone_phy_end,int zone_id)
@@ -482,12 +496,6 @@ int  single_zone_init(uint32 phy_page_start,uint32 phy_page_end, uint32_t zone_p
 void xos_zone_init()
 {
     zone_early_init();
-
-   // zone_init(&zone_normal, 0);
-        
-   // zone_init(&zone_user, 0);
-
-    //  zone_init(&zone_dma, 0); /*当前zone_dma 存在问题原因映射区域太小只有558M*/
     
 }
 
