@@ -145,7 +145,6 @@ int do_syscall_getstat(struct pt_regs *regs){
 
     const char* path_name = (char*)regs->regs[0];
     struct kstat *stat = (struct kstat *)regs->regs[1];
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
     return sys_user_getstat(path_name, stat);
 }
 
@@ -154,7 +153,6 @@ int do_syscall_readdir(struct pt_regs *regs){
     int fd = (int)regs->regs[0];
     struct xos_dirent64 *dirent = (void*)regs->regs[1];
     int buf_size = (int)regs->regs[2];
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
     return  sys_readdir(fd,dirent, buf_size);
 
 }

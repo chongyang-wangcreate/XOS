@@ -96,17 +96,18 @@ void page_fault(struct task_struct *tsk,uint64_t vaddr)
         printk(PT_ERROR,"%s:%d,vaddr=%lx\n\r",__FUNCTION__,__LINE__,vaddr);
         return;
     }
+    uint64_t page_align_vaddr = ALIGN_DOWN(vaddr,PAGE_SIZE);
     uint64_t phy_addr = (uint64_t)xos_get_user_phy(0, 0);
     if(phy_addr == 0){
         printk(PT_ERROR,"%s:%d,vaddr=%lx\n\r",__FUNCTION__,__LINE__,vaddr);
         return ;
     }
     printk(PT_ERROR,"%s:%d,vaddr=%lx\n\r",__FUNCTION__,__LINE__,vaddr);
-    user_page_mapping(tsk->task_pgd, (void *)vaddr,
+    user_page_mapping(tsk->task_pgd, (void *)page_align_vaddr,
     phy_addr,
     PAGE_SIZE,
     0);
-    printk(PT_RUN,"%s:%d,vaddr=%lx phyaddr=%x\n\r",__FUNCTION__,__LINE__,vaddr,phy_addr);
+    printk(PT_RUN,"%s:%d,vaddr=%lx phyaddr=%x\n\r",__FUNCTION__,__LINE__,page_align_vaddr,phy_addr);
 }
 
 void abnormal_scene_display(int err_type,uint64_t esr,uint64_t exce_address){

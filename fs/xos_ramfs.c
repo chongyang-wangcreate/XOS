@@ -146,7 +146,7 @@ int generic_dir_open(struct xos_inode *xnode, struct file *filp)
 */
 int generic_dir_readdir (struct file *filp, void *buf, filldir_t filldir)
 {
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
+    
     xdentry *file_dentry = filp->f_dentry;
     dlist_t *cur_node = NULL;
     int entry_pos;
@@ -159,12 +159,15 @@ int generic_dir_readdir (struct file *filp, void *buf, filldir_t filldir)
     if(filp->f_pos == 0){
         node_num = file_dentry->file_node->node_num;
         if (filldir(buf, ".", 1, pos, node_num, DT_DIR) < 0){
+            printk(PT_WARRING,"%s:%d\n\r",__FUNCTION__,__LINE__);
             return -1;
         }
         filp->f_pos++;
-    }if(filp->f_pos == 1){
+    }
+    if(filp->f_pos == 1){
         node_num = parent_xinode(file_dentry);
         if (filldir(buf, "..", 2, pos, node_num, DT_DIR) < 0){
+            printk(PT_WARRING,"%s:%d\n\r",__FUNCTION__,__LINE__);
             return -1;
         }
         filp->f_pos++;

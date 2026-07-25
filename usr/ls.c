@@ -30,8 +30,7 @@ static int get_file_stat(const char *pathname,struct stat *statbuf)
 
 static int is_dot_dotdot(const char *name)
 {
-
-    return usr_strcmp(name,".") || usr_strcmp(name,"..") == 0;
+    return usr_strcmp(name,".") == 0 || usr_strcmp(name,"..") == 0;
 }
 
 static void ls_join_path_buf(char *dst ,int dst_size,const char *dir,const char *name)
@@ -95,12 +94,13 @@ static int ls_path(const char *path,int long_fmt)
     int offset = 0;
     int read_cnt = 0;
     int fd;
-
+  
     dir = opendir(path);
     if(dir == NULL){
         printf("ls : can't open %s\n\r",path);
         return -1;
     }
+
     fd = dir->io_fd;
     while((byte_read = SYS_CALL_DEF3(NR_READDIR,(uint64_t)fd,
                                     (uint64_t)dir_buf,
@@ -137,29 +137,34 @@ void shell_ls_cmd(int argc,char *argv[]){
     int i;
     int count = 0;
     int long_show_fmt = 0;
-  
     for(i = 1;i < argc ;i++){
         if(argv[i] == NULL){
             continue;
         }
-        if(argv[i][0] == '_' && usr_strcmp(argv[i],"-l") == 0){
+        if(argv[i][0] == '-' && usr_strcmp(argv[i],"-l") == 0){
             long_show_fmt = 1;
             continue;
         }
         count++;
     }
     if(count == 0){
+        printf("%s:\n\r","count = 0");
         ls_path(".",long_show_fmt);
         return;
     }
+    if(long_show_fmt == 1){
 
-    for(i = 1; i < argc; i++){
+        i = 2;
+    }else{
+        i = 1;
+    }
+    for(; i < argc; i++){
 
         if(argv[i] == NULL){
             continue;
         }
         if(argv[i][0] == '-' && usr_strcmp(argv[i], "-l") == 0){
-
+            long_show_fmt = 1;
             continue;
         }
         if(count > 1){

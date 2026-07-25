@@ -146,7 +146,7 @@ void xos_sleep_ticks(u64 ticks)
     l_cur->state = TSTATE_SLEEPING;
     arch_local_irq_disable();
     run_cnt = cpu_array[cur_cpuid()].run_count[l_cur->prio];
-    printk(PT_DEBUG,"%s:%d,cur_task->prio=%d,run_cnt=%d\n\r",__func__,__LINE__,l_cur->prio,run_cnt);
+    printk(PT_RUN,"%s:%d,cur_task->prio=%d,run_cnt=%d\n\r",__func__,__LINE__,l_cur->prio,run_cnt);
     cpu_array[cur_cpuid()].run_count[l_cur->prio]--;
     if(cpu_array[cur_cpuid()].run_count[l_cur->prio] == 0){
         clear_bit((uint8_t*)(cpu_array[cur_cpuid()].run_bitmap.bit_start), l_cur->prio);

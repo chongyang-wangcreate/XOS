@@ -88,6 +88,10 @@ int check_addr_is_readable(void *vaddr)
     return 0;
 }
 
+/*
+    There are still many issues left. Will sort them out later. 
+    Recorded on 2026.07.25
+*/
 static int user_range_in_vma(void *vaddr ,unsigned long size,int need_write)
 {
     unsigned long start = (unsigned long)vaddr;
@@ -102,7 +106,7 @@ static int user_range_in_vma(void *vaddr ,unsigned long size,int need_write)
         return 0;
     }
     vma = find_vma_by_addr(vaddr);
-    if(vma && end <= vma->vm_end){
+    if(vma && start >= vma->vm_start && end <= vma->vm_end){
         if(!need_write || (vma->vm_flags & VM_WRITE)){
             return 1;
         }
@@ -142,12 +146,12 @@ unsigned long copy_to_user(void *to ,const void *from,unsigned long size)
 
         通过to 值找到对应的vma ,判断if(vma->vm_flags &VM_WRITE)
     */
-    if(!check_addr_is_legal(to)){
+    /*if(!check_addr_is_legal(to)){
         return 0;
     }
     if(!check_addr_is_readable(to)){
         return 0;
-    }
+    }*/
     if(!user_range_in_vma(to,size,1)){
         return 0;
     }
