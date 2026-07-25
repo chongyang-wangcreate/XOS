@@ -306,17 +306,7 @@ int cd_cmd(int argc, char*argv[]){
 }
 
 int ls_cmd(int argc, char*argv[]){
-    printf("cd_cmd cd_cmd cd_cmd%s:%d\n\r",__FUNCTION__,__LINE__);
-    if(argc == 2)
-    {
-        shell_ls_cmd(argc,argv);
-    }else if((argc == 2)&&(argv[1][0] == '-')){
-        if(!usr_strcmp(argv[1],"-l"))
-        {
-            /*to do*/
-        }
-    }
-
+    shell_ls_cmd(argc,argv);
     return 0;
 }
 

@@ -11,7 +11,7 @@ typedef struct dirent64 {
     char            d_name[0];
 }dirent64_t;
 
-#define BUF_SIZE  10240
+#define BUF_SIZE  1024
 #define IO_BLOCK_SIZE (BUF_SIZE / sizeof(dirent64_t))
 
 typedef struct dirent_buf{

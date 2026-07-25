@@ -40,6 +40,7 @@
 #include "xnode.h"
 
 #define ROUND_UP64(x) (((x)+sizeof(u64)-1) & ~(sizeof(u64)-1))
+#define RAMFS_DIR_MAX 256
 
 /*
     说明：
@@ -148,7 +149,9 @@ int generic_dir_readdir (struct file *filp, void *buf, filldir_t filldir)
     printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
     xdentry *file_dentry = filp->f_dentry;
     dlist_t *cur_node = NULL;
+    int entry_pos;
     long node_num;
+    int scan_cnt = 0;
     int pos = filp->f_pos;
     unsigned char dt_type;
     int fill_ret;
@@ -165,16 +168,34 @@ int generic_dir_readdir (struct file *filp, void *buf, filldir_t filldir)
             return -1;
         }
         filp->f_pos++;
-    }else{
+    }
+    entry_pos = 2;
+    if(filp->f_pos >= 2){
 
         cur_node = file_dentry->children_list_head.next;
         for (;cur_node != &file_dentry->children_list_head;
             cur_node = cur_node->next){
             xdentry *next_node;
-
-            next_node = list_entry(cur_node, xdentry, ch_at_parent_list);
-            printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
-
+            if(scan_cnt++ >= RAMFS_DIR_MAX){
+                printk(PT_ERROR,"%s:%d,child dentry list loop,dir=%s\n\r",__FUNCTION__,__LINE__,file_dentry->file_name.path_name);
+                return -1;
+            }
+            next_node = dentry_from_child_link(cur_node);
+            if(next_node == NULL){
+                return 0;
+            }
+            if(cur_node->next == NULL || cur_node->prev == NULL){
+                break;
+            }
+            if(entry_pos++ < filp->f_pos){
+                continue;
+            }
+            if(next_node == NULL || next_node->file_node == NULL ||
+               next_node->file_name.path_name == NULL||
+               next_node->file_name.len == 0||
+               next_node->file_name.len >= 128){
+                break;
+               }
             /**
             * 将当前节点信息返回给上层
             */

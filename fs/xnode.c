@@ -185,12 +185,17 @@ void  init_inode_cache(void)
 
 void follow_mount(xmount_t **mnt,xdentry **dentry_cache)
 {
+    int follow_cnt = 0;
     /*
         检查当前目录下是否挂载子文件系统
     */
     printk(PT_RUN,"%s:%d,mount_count=%d,dentry_cache->path_name=%s\n\r",__FUNCTION__,__LINE__,(*dentry_cache)->cur_mnt_count,(*dentry_cache)->file_name.path_name);
     xos_spinlock(&g_file_lock);
     while ((*dentry_cache)->is_mount &EXIST_MOUNT) {
+        if(follow_cnt >= 256){
+            printk(PT_ERROR,"%s:%d,mount follow loop,dentry_path_name=%s\n\r",__FUNCTION__,__LINE__,(*dentry_cache)->file_name.path_name);
+            break;
+        }
         /*
             查找当前路径是否有挂载点
         */
@@ -199,6 +204,10 @@ void follow_mount(xmount_t **mnt,xdentry **dentry_cache)
         xmount_t *child = lookup_mnt(*mnt, *dentry_cache); /*遍历节点Hash_list*/
         if (!child) /*没有挂载子文件系统*/
         {
+            break;
+        }
+        if(child == *mnt && child->root_dentry == *dentry_cache){
+            printk(PT_ERROR,"%s:%d,self mount loop,dentry_path_name=%s\n\r",__FUNCTION__,__LINE__,(*dentry_cache)->file_name.path_name);
             break;
         }
         (*mnt)->alloc_count--;/*回收mnt_cache*/
@@ -718,11 +727,10 @@ int real_lookup_path(char *mount_path, lookup_path_t *look_path)
     if(error_code == -ENOENT){
         printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
         return ret;
-    }else if(ret == RET_ROOT){
+    }else if(look_path->path_type == PATH_ROOT){
         printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
         return ret; /*root  no need for parser*/
-    }
-    else if(ret == RET_LASTER_SLASH){ /*以'/'符号结束*/
+    }else if(ret == RET_LASTER_SLASH){ /*以'/'符号结束*/
         
         lookup_flags |= LOOKUP_FOLLOW | LOOKUP_DIRECTORY; /*目录*/
         look_path->flags |= lookup_flags;

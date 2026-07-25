@@ -15,10 +15,23 @@
 #include "schedule.h"
 #include "setup_map.h"
 #include "interrupt.h"
+#include "user_map.h"
 
 
 
+static struct vm_area_struct *find_vma_by_addr(void *vaddr)
+{
 
+    unsigned long u_vaddr = (unsigned long)vaddr;
+    struct vm_area_struct *iter_mmap = current_task->mm->mmap;
+    while(iter_mmap != NULL){
+        if(iter_mmap->vm_start <= u_vaddr && u_vaddr < iter_mmap->vm_end){
+            return iter_mmap;
+        }
+        iter_mmap = iter_mmap->vm_next;
+    }
+    return NULL;
+}
 
 
 int check_addr_is_legal(void *vaddr)
@@ -75,7 +88,30 @@ int check_addr_is_readable(void *vaddr)
     return 0;
 }
 
+static int user_range_in_vma(void *vaddr ,unsigned long size,int need_write)
+{
+    unsigned long start = (unsigned long)vaddr;
+    unsigned long end;
+    struct vm_area_struct *vma;
 
+    if(size == 0){
+        return 1;
+    }
+    end = start + size;
+    if(end < start){
+        return 0;
+    }
+    vma = find_vma_by_addr(vaddr);
+    if(vma && end <= vma->vm_end){
+        if(!need_write || (vma->vm_flags & VM_WRITE)){
+            return 1;
+        }
+    }
+    if(start >= USER_STACK_START && end <= USER_STACK_TOP){
+        return 1;
+    }
+    return 0;
+}
 
 unsigned long copy_from_user(void *to ,const void *from,unsigned long size)
 {
@@ -110,6 +146,9 @@ unsigned long copy_to_user(void *to ,const void *from,unsigned long size)
         return 0;
     }
     if(!check_addr_is_readable(to)){
+        return 0;
+    }
+    if(!user_range_in_vma(to,size,1)){
         return 0;
     }
     memcpy(to,from,size);

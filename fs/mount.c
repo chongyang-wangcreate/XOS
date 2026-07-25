@@ -220,6 +220,7 @@ init_file_fail:
 
 xmount_t *lookup_mnt(xmount_t *mnt, xdentry *dentry_cache)
 {
+    int scan_cnt = 0;
     xmount_t *ret = NULL;
 //    dlist_t *dentry_head = &filenode_cache->children_list_head;
     dlist_t *hash_head;
@@ -246,6 +247,10 @@ xmount_t *lookup_mnt(xmount_t *mnt, xdentry *dentry_cache)
     printk(PT_RUN,"%s:%d，hash=%lx\n\r",__FUNCTION__,__LINE__,hash);
     hash_head = &mount_hash_pool[hash%MAX_HASH_NR];
     list_for_each(cur, hash_head) {
+        if(scan_cnt++ >= MOUNT_CACHE_NR){
+           printk(PT_ERROR,"%s:%d，loop exceeded the limit\n\r",__FUNCTION__,__LINE__);
+           break;
+        }
         tmp_mount = list_entry(cur, xmount_t, hash_list);
         printk(PT_RUN,"%s:%d,tmp_mount->root_dentry->path_name=%s\n\r",__FUNCTION__,__LINE__,tmp_mount->root_dentry->file_name.path_name);
         if (tmp_mount->mount_parent == mnt && tmp_mount->mount_point == dentry_cache) {

@@ -44,6 +44,7 @@
 xos_spinlock_t  devfs_lock;
 
 xinode* alloc_devfs_node_init(xsuperblock * super,int mode,devno_t dev);
+int generic_dir_readdir(struct file *filp,void *buf,filldir_t filldir);
 
 int devfs_new_fnode(xinode *parent_node, xdentry *dentry_cache,
 	int mode, devno_t dev)
@@ -152,7 +153,7 @@ int devfs_read_dir(struct file *filp, void *buf, filldir_t)
 xfile_ops_t devfs_dir_file_ops = {
     .open   = generic_dir_open,
 //  .read = devfs_read_dir,
-//  .readdir = devfs_read_dir,
+    .readdir = generic_dir_readdir,
 };
 
 void devfs_super_init(xsuperblock * super,int flags,void *data)

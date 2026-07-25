@@ -24,7 +24,7 @@
 
 
 
-unsigned int open(const char *pathname, int flags, int mode)
+int open(const char *pathname, int flags, int mode)
 {
    return  SYS_CALL_DEF3(NR_OPEN,(uint64_t)pathname, flags,mode);
 }

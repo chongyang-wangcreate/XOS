@@ -49,10 +49,10 @@ int get_stat(xinode * file_node,struct kstat *attr)
     attr->st_uid =   file_node->uid;
     attr->st_gid =   file_node->gid;
     attr->st_rdev =  file_node->devno;
+    attr->st_size =  file_node->file_size;
     attr->st_atime = file_node->i_atime;
     attr->st_mtime = file_node->i_mtime;
     attr->st_ctime = file_node->i_ctime;
-//    attr->st_size =  fnode_size(file_node);
     attr->st_blocks = file_node->block_count;
     attr->st_blksize = file_node->block_size;
     printk(PT_DEBUG,"%s:%d，file_node->node_mode=%x\n\r",__FUNCTION__,__LINE__,file_node->node_mode);
@@ -66,7 +66,7 @@ static int do_stat(int dfd, char  *name, struct kstat *stat)
     int lookup_flags = 0;
     int ret;
 
-    lookup_flags |= LOOKUP_DIRECTORY;
+    lookup_flags |= LOOKUP_FOLLOW;
     printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
     ret = resolve_path( name, lookup_flags, &look_path);
     if (!ret) {
@@ -86,7 +86,11 @@ static inline int copy_stat_to_user(struct kstat *attr, void *stat)
     tmp_stat.st_ino =   attr->st_ino;
     tmp_stat.st_mode =  attr->st_mode;
     tmp_stat.st_nlink = attr->st_nlink;
+    tmp_stat.st_uid  = attr->st_uid;
+    tmp_stat.st_gid = attr->st_gid;
     tmp_stat.st_rdev =  attr->st_rdev;
+    tmp_stat.st_blksize = attr->st_blksize;
+    tmp_stat.st_blocks = attr->st_blocks;
     tmp_stat.st_size =  attr->st_size;
     tmp_stat.st_atime = attr->st_atime;
     tmp_stat.st_mtime = attr->st_mtime;

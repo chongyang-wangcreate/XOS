@@ -106,10 +106,14 @@ struct file *do_open_file(lookup_path_t *look, struct open_flags *op)
     if(!new_file_ret){
         goto  alloc_fail;
     }
+    memset(new_file_ret,0,sizeof(struct file));
     /*
         init file 
     */
     xos_spinlock(&inode_lock);
+    xos_spinlock_init(&new_file_ret->f_lock);
+    new_file_ret->ref_count = 1;
+    new_file_ret->f_count = 1;
     new_file_ret->f_flags = op->open_flag;
     new_file_ret->f_mode = op->acc_mode;
     printk(PT_RUN,"WWWWWWWWWW %s:%d,op->acc_mode=%x\n\r",__FUNCTION__,__LINE__,op->acc_mode);
@@ -184,13 +188,8 @@ int check_open_file( const char *pathname,lookup_path_t  *look_path,struct open_
         printk(PT_DEBUG,"RETRETRETRET%s:%d\n\r",__FUNCTION__,__LINE__);
         return ret;
     }
-    /*
-        20250301 22:23  check add
-    */
-    if(look_path->path_type != PATH_NORMAL) //非正常文件
-    {
-        ret = -EISDIR;
-        return ret ;
+    if(!look_path->look_dentry || !look_path->look_dentry->file_node){
+        return -ENOENT;
     }
     /*
         Attempt to open the file

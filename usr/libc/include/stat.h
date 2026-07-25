@@ -1,5 +1,9 @@
 #ifndef __STAT_H__
 #define __STAT_H__
+struct timespce64{
+	long tv_sec;
+	long tv_nsec;
+};
 struct stat {
 	int     st_dev;     /* ID of device containing file */
 	ino_t     st_ino;     /* inode number */
@@ -11,9 +15,9 @@ struct stat {
 	off_t     st_size;    /* total size, in bytes */
 	blksize_t st_blksize; /* blocksize for file system I/O */
 	blkcnt_t  st_blocks;  /* number of 512B blocks allocated */
-	time_t    st_atime;   /* time of last access */
-	time_t    st_mtime;   /* time of last modification */
-	time_t    st_ctime;   /* time of last status change */
+	struct timespce64    st_atime;   /* time of last access */
+	struct timespce64    st_mtime;   /* time of last modification */
+	struct timespce64    st_ctime;   /* time of last status change */
 };
 
 

@@ -1,6 +1,7 @@
 
 #include "types.h"
 #include "usys.h"
+#include "ustring.h"
 #include "./libc/include/dirent.h"
 #include "./libc/include/readdir.h"
 #include "printf.h"
@@ -25,6 +26,7 @@ DIR * alloc_dp()
     int i = 0;
     for(;i < MAX_DP_NR;i++){
         if(dp_buf[i].flags == 0){
+            user_memset(&dp_buf[i],0,sizeof(dp_buf[i]));
             dp_buf[i].flags = 1;
             return &dp_buf[i];
         }
@@ -56,7 +58,7 @@ DIR *opendir(const char *name)
 
     dp = fdgetdp(fd);
     if (!dp) {
-        
+        return NULL;
     }
     return dp;
 }
@@ -80,11 +82,13 @@ dirent64_t *readdir(DIR *dirp){
 
     cur_dent = dirp->dd_slab.next_dir_block;
     dirp->dd_slab.cur_dir_block = dirp->dd_slab.next_dir_block;
+    if(cur_dent->d_reclen == 0 || cur_dent->d_reclen > dirp->remain_bytes){
+        dirp->remain_bytes = 0;
+        return NULL;
+    }
 
     dirp->dd_slab.next_dir_block = (dirent64_t *)((char *)dirp->dd_slab.cur_dir_block + cur_dent->d_reclen);
     dirp->remain_bytes -= cur_dent->d_reclen;
-    printf("%s:%d,dir->bytes_left=%d,dent->d_reclen=%d\n\r",__FUNCTION__,__LINE__,dirp->remain_bytes,cur_dent->d_reclen);
-    printf("%s:%d,dent->d_name=%s\n\r",__FUNCTION__,__LINE__,cur_dent->d_name);
     return cur_dent;
 }
 

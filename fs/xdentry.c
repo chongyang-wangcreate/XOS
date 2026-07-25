@@ -196,11 +196,16 @@ static int dentry_name_match(xdentry *dentry_node,const path_name_t *name)
 
 xdentry *find_in_pdentry(xdentry *parent, path_name_t *name)
 {
+    int scan_cnt = 0;
     dlist_t *list_node = NULL;
     xdentry *dentry_node = NULL;
     xos_spinlock(&dentry_lock);
     dlist_t  *ch_head = &parent->children_list_head;
     list_for_each(list_node, ch_head){
+        if(scan_cnt++ >= MAX_DENTRY){
+            printk(PT_ERROR,"%s:%d,child dentry list loop,parent=%s\n\r",__FUNCTION__,__LINE__,parent->file_name.path_name);
+            break;
+        }
         dentry_node = list_entry(list_node, xdentry, ch_at_parent_list);
         printk(PT_RUN,"%s:%d,dentry_node->path_name=%s,name=%s,name_len=%d,\n\r",__FUNCTION__,__LINE__,dentry_node->file_name.path_name,(const char*)name->path_name,name->len);
         if(dentry_name_match(dentry_node,name))
@@ -219,10 +224,15 @@ xdentry *find_in_pdentry(xdentry *parent, path_name_t *name)
 
 xdentry *find_in_pdentry_unlock(xdentry *parent, path_name_t *name)
 {
+    int scan_cnt = 0;
     dlist_t *list_node = NULL;
     xdentry *dentry_node = NULL;
     dlist_t  *ch_head = &parent->children_list_head;
     list_for_each(list_node, ch_head){
+        if(scan_cnt++ >= MAX_DENTRY){
+            printk(PT_ERROR,"%s:%d,child dentry list loop,parent=%s\n\r",__FUNCTION__,__LINE__,parent->file_name.path_name);
+            break;
+        }
         dentry_node = list_entry(list_node, xdentry, ch_at_parent_list);
         if(dentry_name_match(dentry_node,name))
         {
@@ -234,7 +244,22 @@ xdentry *find_in_pdentry_unlock(xdentry *parent, path_name_t *name)
     return NULL;
 
 }
+xdentry *dentry_from_child_link(dlist_t *node)
+{
+    int i;
+    if(node == NULL){
+        return NULL;
+    }
+    for(i = 0 ;i < MAX_DENTRY ; i++){
+        if(dentry_pool.dentry_cache_man[i].alloc_flags &&
+           node == &dentry_pool.dentry_cache_man[i].dentry_cache.ch_at_parent_list){
+            return &dentry_pool.dentry_cache_man[i].dentry_cache;
+        }
 
+    }
+    return NULL;
+
+}
 /*
     2024.11.08
     这个函数开发的不完善，后续再完善

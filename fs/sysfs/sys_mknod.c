@@ -84,7 +84,7 @@ int check_mknod(xdentry *son_node_dentry,xinode *parent_node,int mode,devno_t de
         
         ret = -EEXIST;
     }
-    else if (!parent_node->inode_ops || !parent_node->inode_ops->mkdir){
+    else if (!parent_node->inode_ops || !parent_node->inode_ops->mknod){
         
         ret = -EPERM;
     }

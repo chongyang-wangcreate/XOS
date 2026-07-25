@@ -90,13 +90,15 @@ struct getdents_callback64 {
 #define ROUND_UP(x) (((x)+sizeof(long)-1) & ~(sizeof(long)-1))
 #define ROUND_UP64(x) (((x)+sizeof(u64)-1) & ~(sizeof(u64)-1))
 
-int copy_dir_msg_to_user(void * __buf, const char * name, int namlen, long offset,
+int copy_dir_msg_to_user(void * __buf, const char * name, int namelen, long offset,
 		     long fnode_num, unsigned int d_type)
 {
-
+    unsigned short reclen_short;
+    unsigned char dtype;
+    char nul = '\0';
     struct xos_dirent64 *dirent;
     struct getdents_callback64 * buf = (struct getdents_callback64 *)__buf;
-    int reclen = ROUND_UP64(offsetof(struct xos_dirent64, d_name) + namlen + 1);
+    int reclen = ROUND_UP64(offsetof(struct xos_dirent64, d_name) + namelen + 1);
 
     buf->error = -EINVAL;
     if (reclen > buf->count)
@@ -104,18 +106,28 @@ int copy_dir_msg_to_user(void * __buf, const char * name, int namlen, long offse
 
     dirent = buf->dirent_slab.prev_dir;
     if(dirent){
-        memcpy(&dirent->d_off,&offset,sizeof(long));
+        if(!copy_to_user(&dirent->d_off,&offset,sizeof(long))){
+            buf->error = -EFAULT;
+            return -EFAULT;
+        }
     }
 
     dirent = buf->dirent_slab.current_dir;
-    memcpy(&dirent->d_ino,&fnode_num,sizeof(long));
-    memcpy(&dirent->d_reclen,&reclen,sizeof(short));
-    memcpy(&dirent->d_type,&d_type,sizeof(int));
-    strncpy(dirent->d_name,name,namlen);
+    reclen_short = (unsigned short)reclen;
+    dtype = (unsigned char)d_type;
+    if(!copy_to_user(&dirent->d_ino,&fnode_num,sizeof(long))||
+       !copy_to_user(&dirent->d_reclen,&reclen_short,sizeof(short))||
+       !copy_to_user(&dirent->d_type,&dtype,sizeof(unsigned char))||
+       !copy_to_user(dirent->d_name,name,namelen)||
+       !copy_to_user(&dirent->d_name[namelen],&nul,sizeof(char))){
+        buf->error = -EFAULT;
+        return -EFAULT;
+    }
     buf->dirent_slab.prev_dir = dirent;
     dirent = (void  *)dirent + reclen;
     buf->dirent_slab.current_dir = dirent;
     buf->count -= reclen;
+    buf->error = 0;
     printk(PT_DEBUG,"%s:%d,name=%s\n\r",__FUNCTION__,__LINE__,name);
     return 0;
 }
@@ -179,7 +191,7 @@ int sys_readdir(unsigned int fd, struct xos_dirent64 *dirent, unsigned int buf_s
     if (buf.dirent_slab.last_dir) 
     {
         printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
-        if (!memcpy(&buf.dirent_slab.last_dir->d_off,&filp->f_pos,sizeof(long))) /*need chang to do*/
+        if (!copy_to_user(&buf.dirent_slab.last_dir->d_off,&filp->f_pos,sizeof(long))) /*need chang to do*/
             ret = -EFAULT;
         else
             ret = buf_size - buf.count;

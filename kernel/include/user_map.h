@@ -6,6 +6,11 @@
 #define VA_BITS 39
 
 #define USER_SPACE_DEVMAP      0x110000000
+#define USER_STACK_SIZE 0x800000
+
+#define USER_STACK_TOP    (1UL << VA_BITS)
+#define USER_STACK_START  (USER_STACK_TOP - USER_STACK_SIZE)
+#define USER_STACK_INIT_SP (USER_STACK_TOP & ~0xfUL)
 
 #define __va(x) ((void *)((unsigned long)(x) + VA_KERNEL_START))
 #define __pa(x) ((void *)((unsigned long)(x) - VA_KERNEL_START))

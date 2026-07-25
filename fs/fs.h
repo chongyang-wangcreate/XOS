@@ -367,12 +367,11 @@ extern xos_spinlock_t g_file_lock;
 
 static inline long parent_xinode(xdentry *xdentry_node)
 {
-    long res;
-
-    xos_spinlock(&dentry_lock);
-    res = xdentry_node->parent_dentry->file_node->node_num;
-    xos_unspinlock(&dentry_lock);
-    return res;
+    if(!xdentry_node || !xdentry_node->parent_dentry ||
+    !xdentry_node->parent_dentry->file_node){
+        return 0;
+    }
+    return xdentry_node->parent_dentry->file_node->node_num;
 }
 
 
@@ -397,7 +396,7 @@ extern void special_xnode_init(xinode *inode,int mode,devno_t dev);
 extern void free_dentry_cache(xdentry *dentry_node);
 extern int is_alloc_dentry_cache(xdentry *dentry_node);
 extern xdentry *find_in_pdentry_unlock(xdentry *parent, path_name_t *name);
-
+extern xdentry *dentry_from_child_link(dlist_t *node);
 extern xdentry *alloc_dentry_cache();
 extern xdentry *lookup_dentry_in_pdentry(path_name_t *name, xdentry * p_dir,lookup_path_t *look);
 

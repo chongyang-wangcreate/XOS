@@ -113,8 +113,7 @@ int do_syscall_getcwd(struct pt_regs *regs){
 
     char *buf = (char*)regs->regs[0];
     int buf_size = regs->regs[1];
-    do_sys_getcwd(buf,buf_size);
-    return 0;
+    return do_sys_getcwd(buf,buf_size);
 }
 
 int do_syscall_chdir(struct pt_regs *regs){
@@ -209,7 +208,7 @@ int sys_call_entry(int sys_call_no,struct pt_regs *regs)
 {
     int ret;
     printk(PT_RUN,"%s:%d,sys_call_no=%d\n\r",__FUNCTION__,__LINE__,sys_call_no);
-    if(sys_call_no > NR_MAX){
+    if(sys_call_no >= NR_MAX){
         return -1;
     }
     ret = syscall_tabs[sys_call_no](regs);
