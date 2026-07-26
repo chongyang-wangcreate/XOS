@@ -46,18 +46,22 @@
 
 int driver_register(struct       driver_desc *drv)
 {
+    if(!drv){
+        return -1;
+    }
     list_init(&drv->list);
 
-    xos_bus_insert_driver(drv);
+    return xos_bus_insert_driver(drv);
 
-    return 0;
 }
 
 
 int driver_unregister(struct       driver_desc *drv)
 {
+    if(!drv){
+        return -1;
+    }
     list_del(&drv->list);
-    xos_bus_insert_driver(drv);
     return 0;
 }
 

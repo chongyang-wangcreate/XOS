@@ -21,6 +21,7 @@
 
 #include "types.h"
 #include "list.h"
+#include "string.h"
 #include "spinlock.h"
 #include "xos_mutex.h"
 #include "xos_dev.h"
@@ -31,6 +32,9 @@ struct xos_bus_desc  platform_bus;
 struct xos_bus_desc  i2c_bus;
 
 int xos_bus_register(struct xos_bus_desc * bus){
+    if(!bus){
+        return -1;
+    }
     list_init(&bus->device_list);
     list_init(&bus->driver_list);
 
@@ -47,12 +51,11 @@ void xos_bus_genrial_probe()
 int device_driver_match(xdevice_t *dev,xdriver_t *driver)
 {
     int ret;
-//    strcmp(dev->device_name, driver->driver_name)
-    if(!driver->bus->bus_match){
+    if(!dev || !driver || !driver->bus || !driver->bus->bus_match){
         return -1;
     }
     ret = driver->bus->bus_match(dev,driver);
-    if(ret < 0){
+    if(ret != 0){
         return -1;
     }
     /*
@@ -88,7 +91,7 @@ int xos_device_match(xdevice_t *dev)
     dlist_t *driver_list = &bus->driver_list;
     xdriver_t *driver_node;
 
-    if(!bus->bus_match){
+    if(!bus || !bus->bus_match){
         return -1;
     }
     list_for_each(cur_node, driver_list){
@@ -123,6 +126,9 @@ int xos_bus_insert_device(xdevice_t *dev)
     if(!dev || !dev->bus){
         return -1;
     }
+    if(dev->list.next == NULL || dev->list.prev == NULL){
+        list_init(&dev->list);
+    }
     list_add_front(&dev->list, &dev->bus->device_list);
     ret = xos_device_match(dev);
     return ret;
@@ -139,6 +145,9 @@ int xos_bus_insert_driver(xdriver_t *drv)
     if(!drv || !drv->bus){
         return -1;
     }
+    if(drv->list.next == NULL || drv->list.prev == NULL){
+        list_init(&drv->list);
+    }
     list_add_front(&drv->list,  &drv->bus->driver_list);
     ret = xos_driver_match(drv);
     return ret;
@@ -146,8 +155,10 @@ int xos_bus_insert_driver(xdriver_t *drv)
 
 int xos_bus_match(struct device_desc *dev, struct driver_desc *drv)
 {
-
-    return 0;
+    if(!dev || !drv || !drv->bus || !drv->bus->bus_match){
+        return -1;
+    }
+    return strcmp(dev->device_name,drv->driver_name) == 0 ? 0:-1;
 }
 
 

@@ -76,7 +76,8 @@
 extern void * exce_vectors;
 extern void * k_bss_start;
 extern void * k_bss_end;
-
+extern uint64 __bss_start[];
+extern uint64 __bss_end[];
 
 #define wfi()       asm volatile("wfi" : : : "memory")
 
@@ -88,7 +89,7 @@ char idle_stack[1024];
 void clear_kbss (void)
 {
    // printk(PT_DEBUG,"clear_bss%s:%d\n\r",__FUNCTION__,__LINE__);
-  //  memset(&k_bss_start, 0x00, (unsigned long)&k_bss_end-(unsigned long)&k_bss_start);
+    memset(__bss_start, 0x00, (unsigned long)__bss_end - (unsigned long)__bss_start);
 }
 
 
@@ -162,10 +163,8 @@ void kernel_init (void)
     clear_kbss();
   // boot_uart_init((uint32*)UART0_VIRT);
   // boot_puts("xos boot_main\n");
-   char *test_ptr = NULL;
     xos_uart_init();
     boot_mem_init();
-    xos_uart_puts("Hello from kernel_init 2\n");
     
     xos_set_vector_entry();
     /*
@@ -180,11 +179,7 @@ void kernel_init (void)
     mem_cache_init();
    // test_buddy();
 
-   // printk(PT_DEBUG,"it is ok");
-    test_ptr = (char *)xos_get_free_page(0,1);
-    put_hex((uint64)test_ptr);
-    *test_ptr = 'c';
-    xos_uart_puts("gets gets\n");
+
     local_irq_disable();
     xos_irq_init();
     xos_uart_irq_init();

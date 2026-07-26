@@ -36,6 +36,7 @@ typedef struct device_desc
 {
     char *device_name;
     dlist_t list;                        /* 设备在驱动中的链表 */
+    dlist_t register_list;                /*device global regitery*/
     struct driver_desc *driver;      /* 设备所在的驱动 */
     uint16_t mtime;                     /* 设备修改时的时间 */
     uint16_t mdate;                     /* 设备修改时的日期 */
@@ -59,8 +60,8 @@ typedef struct driver_desc
 
 
 
-
-
 extern int xos_init_deivices();
-
+extern int dev_insert(xdevice_t *dev);
+extern int dev_unregister(xdevice_t *dev);
+extern xdevice_t *dev_find_by_name(const char *name);
 #endif

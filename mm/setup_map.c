@@ -272,9 +272,7 @@ void xos_linear_maps(uint64 phy_start, uint64 phy_end)
     put_hex((uint64)pgdir);
 
     void *map_vaddr_star = P2V(phy_start);
-    xos_uart_puts("\n");
-    put_hex((uint64)map_vaddr_star);
-     xos_uart_puts("\n");
+
     uint64  prot = PG_RW_EL1_EL0;
     
     boot_mem_3level_maps(pgdir, map_vaddr_star,map_size, phy_start,prot);

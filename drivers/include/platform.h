@@ -11,6 +11,10 @@ struct platform_device {
     int irq;
 };
 
+#define RESOURCE_MEM    1
+#define RESOURCE_IO     2
+#define RESOURCE_IRQ    3
+
 struct of_device_id {
     char	name[32];
     char	type[32];
@@ -30,6 +34,7 @@ struct platform_driver{
 struct resource {
     unsigned long  start;
     unsigned long  end;
+    unsigned long  type;
 };
 
 #define ARRAY_SIZE(array) (sizeof(array)/sizeof(array[0]))

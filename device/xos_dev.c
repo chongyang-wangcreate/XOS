@@ -34,16 +34,80 @@
 #include "xos_kern_def.h"
 #include "xos_char_dev.h"
 #include "xos_dev.h"
+#include "xos_bus.h"
 
 extern int console_init();
+static dlist_t xos_device_register;
+static int xos_device_register_ready;
 
+static void xos_device_reigster_init(void)
+{
+    if(!xos_device_register_ready){
+        list_init(&xos_device_register);
+        xos_device_register_ready = 1;
+    }
+}
+
+static int xos_device_add_to_list(xdevice_t *dev)
+{
+    if(!dev || !dev->device_name){
+        return -1;
+    }
+    xos_device_reigster_init();
+    list_init(&dev->register_list);
+    list_add_front(&dev->register_list,&xos_device_register);
+    return 0;
+}
+
+xdevice_t *dev_find_by_name(const char *name)
+{
+    dlist_t *head;
+    dlist_t *cur;
+    xdevice_t *dev;
+    if(!name){
+        return NULL;
+    }
+    xos_device_reigster_init();
+    head = &xos_device_register;
+    list_for_each(cur,head){
+        dev = list_entry(cur,xdevice_t,register_list);
+        if(dev->device_name && strcmp(dev->device_name,name) == 0){
+            return dev;
+        } 
+    }
+    return NULL;
+
+}
 
 int dev_insert(xdevice_t * dev)
 {
-//    struct xos_bus_desc  *bus = dev->bus;
-    
+
+    int ret;
+    if(!dev){
+        return -1;
+    }
+    ret = xos_device_add_to_list(dev);
+    if(ret < 0){
+        return ret;
+    }
+    if(!dev->bus){
+        return 0;
+    }
+    return xos_bus_insert_device(dev);
 
     
+    return 0;
+}
+
+int dev_unregister(xdevice_t *dev)
+{
+    if(!dev){
+        return -1;
+    }
+    list_del(&dev->register_list);
+    if(dev->bus){
+        list_del(&dev->list);
+    }
     return 0;
 }
 void dev_del()
