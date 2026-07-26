@@ -9,6 +9,10 @@
 .equ PAGESIZE,              4096
 
 /* 页表项标志位 */
+.equ L1_SHIFT,               30
+.equ L2_SHIFT,               21
+.equ PT_INDEX_MASK,          0x1ff
+.equ BLOCK_SIZE,             0x200000
 .equ PTE_VALID,             0x0000000000000001
 .equ PTE_TABLE,             0x0000000000000002
 .equ PTE_AF,                0x0000000000000400
@@ -30,12 +34,94 @@
 .equ TCR_IPS,               (0 << 32)           /* 40位物理地址 */
 .equ TCR_VALUE,             (TCR_T0SZ | TCR_T1SZ | TCR_TG0_4KB | TCR_TG1_4KB | TCR_IPS)
 
-/* MAIR 设置 */
+/* MAIR set */
 .equ MAIR_DEVICE_nGnRnE,    0x00
 .equ MAIR_NORMAL_NC,        0x44
 .equ MAIR_VALUE,            ((MAIR_NORMAL_NC << 8) | MAIR_DEVICE_nGnRnE)  /* 0x4400 */
 .equ CPACR_EL1_FPEN,        (3 << 20)
 
+.macro enable_fp
+    ldr x0, =CPACR_EL1_FPEN
+    msr cpacr_el1,x0
+    isb
+.endm
+
+.macro clear_bss
+    ldr x1, =__bss_start_phys
+    ldr w2, =__bss_size
+1:
+    cbz w2,2f
+    str xzr,[x1],#8
+    sub w2,w2,#1
+    b 1b
+2:
+.endm
+
+.macro map_l2_blocks table,phys_start,phys_end,virt_base,flags
+    adrp x0,\table
+    ldr x1,=\phys_start
+    ldr x2,=\phys_end
+    ldr x3,=\virt_base
+    ldr x4,=\flags
+
+    add x5,x1,x3
+    add x6,x2,x3
+    lsr x7,x5,#L2_SHIFT
+    and x7,x7,#PT_INDEX_MASK
+    lsr x8,x6,#L2_SHIFT
+    and x8,x8,#PT_INDEX_MASK
+    orr x9,x1,x4
+1:
+    str x9,[x0,x7,lsl #3]
+    add x7,x7,#1
+    add x9,x9,#BLOCK_SIZE
+    cmp x7,x8
+    b.ls 1b
+.endm
+.macro install_l1_table l1_table,l2_table,virt
+    adrp x0,\l1_table
+    ldr x1,=\virt
+    lsr x2,x1,#L1_SHIFT
+    and x2,x2, #PT_INDEX_MASK
+    adrp x3,\l2_table
+    ldr x4,=PTE_TABLE_FLAGS
+    orr x3,x3,x4
+    str x3,[x0,x2,lsl #3]
+.endm
+
+.macro install_boot_page_tables
+    map_l2_blocks l2_user_pgt,PHYS_MEM_START,(kernel_end_phys -1),0,PTE_KERNEL_FLAGS
+    install_l1_table l1_user_pgt,l2_user_pgt,PHYS_MEM_START
+
+    map_l2_blocks l2_kernel_pgt0,DEVICE_MEM_START,DEVICE_MEM_END,VA_KERNEL_START,PTE_DEVICE_FLAGS
+    map_l2_blocks l2_kernel_pgt1,PHYS_MEM_START,(kernel_end_phys -1),VA_KERNEL_START,PTE_KERNEL_FLAGS
+
+    install_l1_table l1_kernel_pgt,l2_kernel_pgt0,(VA_KERNEL_START + DEVICE_MEM_START)
+    install_l1_table l1_kernel_pgt,l2_kernel_pgt1,(VA_KERNEL_START + PHYS_MEM_START)
+.endm
+
+.macro set_mmu_regs
+    adrp x0,l1_user_pgt
+    msr ttbr0_el1,x0
+    adrp x0,l1_kernel_pgt
+    msr ttbr1_el1,x0
+
+    ldr x0,=TCR_VALUE
+    msr tcr_el1,x0
+    ldr x0,=MAIR_VALUE
+    msr mair_el1,x0 
+.endm
+
+.macro enable_mmu
+    isb
+    tlbi vmalle1
+    dsb sy
+    isb
+    mrs x0,sctlr_el1
+    orr x0,x0,#1
+    msr sctlr_el1,x0
+    isb
+.endm
 .section ".text.boot"
 
 .global _start
@@ -43,178 +129,22 @@
 _start:
     mrs x1, mpidr_el1
     and x1, x1, #0xff
-    cbz x1, kernel_start
+    cbz x1, primary_start
     b secondary_entry
 
-kernel_start:
-    ldr x0, =CPACR_EL1_FPEN
-    msr cpacr_el1,x0
-    isb
+primary_start:
+    enable_fp
+    clear_bss
+    install_boot_page_tables
+    set_mmu_regs
+    enable_mmu
+    
+    ldr x1, =p_entry_virt
+    br x1
 
-    ldr x1, =__bss_start_phys
-    ldr w2, =__bss_size
-1:  cbz w2, 2f
-    str xzr, [x1], #8
-    sub w2, w2, #1
-    b 1b
-2:
-
-    /* ========== 用户页表：恒等映射 ========== */
-    adrp x0, l2_user_pgt
-    
-    /* 映射物理地址 0x40000000 到 0x40000000（恒等映射） */
-    ldr x1, =PHYS_MEM_START       /* 0x40000000 */
-    ldr x2, =kernel_end_phys
-    sub x2, x2, #1
-    
-    /* 39位地址空间：L2索引是位[29:21]，右移21位 */
-    lsr x3, x1, #21          /* 正确的L2索引计算：位[29:21] */
-    and x3, x3, #0x1ff
-    lsr x4, x2, #21
-    and x4, x4, #0x1ff
-    
-    /* 设置页表项 */
-    ldr x5, =PTE_KERNEL_FLAGS
-    orr x6, x1, x5
-    
-l2_upgt_loop:
-    str x6, [x0, x3, lsl #3]
-    add x3, x3, #1
-    add x6, x6, #0x200000
-    cmp x3, x4
-    b.ls l2_upgt_loop
-    
-    /* L1 用户页表 - 39位地址空间：L1索引是位[38:30]，右移30位 */
-    adrp x0, l1_user_pgt
-    ldr x1, =PHYS_MEM_START
-    lsr x3, x1, #30          /* 正确的L1索引计算：位[38:30] */
-    and x3, x3, #0x1ff
-    ldr x4, =PTE_TABLE_FLAGS
-    adrp x5, l2_user_pgt
-    orr x6, x5, x4
-    str x6, [x0, x3, lsl #3]
-    
-    /* ========== 内核页表 ========== */
-    /* 设备内存 0x08000000 - 0x3FFFFFFF */
-    adrp x0, l2_kernel_pgt0
-    
-    ldr x2, =DEVICE_MEM_START
-    ldr x3, =DEVICE_MEM_END
-    ldr x4, =VA_KERNEL_START
-    
-    /* 计算虚拟地址 */
-    add x5, x2, x4           /* 虚拟地址起始: 0xFFFFFF8008000000 */
-    add x6, x3, x4           /* 虚拟地址结束: 0xFFFFFF803FFFFFFF */
-    
-    /* 39位地址空间：L2索引是位[29:21]，右移21位 */
-    lsr x7, x5, #21
-    and x7, x7, #0x1ff
-    lsr x8, x6, #21
-    and x8, x8, #0x1ff
-    
-    /* 设置页表项 */
-    ldr x10, =PTE_DEVICE_FLAGS
-    orr x9, x2, x10
-    
-    /* 修正：计算正确的物理地址 */
-mov x11, x7                  /* x11 = L2起始索引 (0x40) */
-lsl x11, x11, #21            /* x11 = 0x40 << 21 = 0x08000000 */
-orr x9, x11, x10             /* x9 = 0x08000000 | 0x401 = 0x08000401 */
-
-l2pgt_loop0:
-    str x9, [x0, x7, lsl #3]
-    add x7, x7, #1
-    add x9, x9, #0x200000
-    cmp x7, x8
-    b.ls l2pgt_loop0
-    
-    /* 内核代码 0x40000000 - kend */
-    adrp x1, l2_kernel_pgt1
-    ldr x2, =PHYS_MEM_START
-    ldr x3, =kernel_end_phys
-    sub x3, x3, #1
-    
-    add x5, x2, x4
-    add x6, x3, x4
-    
-    /* 39位地址空间：L2索引是位[29:21]，右移21位 */
-    lsr x7, x5, #21
-    and x7, x7, #0x1ff
-    lsr x8, x6, #21
-    and x8, x8, #0x1ff
-    
-    ldr x10, =PTE_KERNEL_FLAGS
-    orr x9, x2, x10
-    
-l2pgt_loop1:
-    str x9, [x1, x7, lsl #3]
-    add x7, x7, #1
-    add x9, x9, #0x200000
-    cmp x7, x8
-    b.ls l2pgt_loop1
-    
-    /* L1 内核页表 - 39位地址空间：L1索引是位[38:30]，右移30位 */
-    adrp x0, l1_kernel_pgt
-    
-    /* 第一项: 设备内存 (0xFFFFFF8008000000) */
-    ldr x1, =DEVICE_MEM_START
-    ldr x2, =VA_KERNEL_START
-    add x3, x1, x2           /* 虚拟地址: 0xFFFFFF8008000000 */
-    lsr x5, x3, #30          /* 正确的L1索引计算：位[38:30] */
-    and x5, x5, #0x1ff
-    
-    ldr x6, =PTE_TABLE_FLAGS
-    adrp x7, l2_kernel_pgt0
-    orr x7, x7, x6
-    str x7, [x0, x5, lsl #3]
-    
-    /* 第二项: 内核代码/数据 (0xFFFFFF8040000000) */
-    ldr x1, =PHYS_MEM_START
-    add x3, x1, x2           /* 虚拟地址: 0xFFFFFF8040000000 */
-    lsr x5, x3, #30          /* 正确的L1索引计算：位[38:30] */
-    and x5, x5, #0x1ff
-    
-    adrp x8, l2_kernel_pgt1
-    orr x8, x8, x6
-    str x8, [x0, x5, lsl #3]
-    
-    /* 验证UART映射计算 */
-    /* UART地址: 0x09000000 -> 虚拟地址: 0xFFFFFF8009000000 */
-    ldr x1, =UART0_PHYS
-    add x3, x1, x2           /* 0xFFFFFF8009000000 */
-    
-    /* 计算L1索引：位[38:30] */
-    lsr x4, x3, #30
-    and x4, x4, #0x1ff       /* 应该是0x100 (256) */
-    
-    /* 计算L2索引：位[29:21] */
-    lsr x5, x3, #21
-    and x5, x5, #0x1ff       /* 应该是0x80 (128) */
-    
-    /* 验证：UART应该在l2kpgt0表中，L1索引=0x100，L2索引=0x80 */
-    
-    /* ========== 配置 MMU ========== */
-    adrp x0, l1_user_pgt
-    msr ttbr0_el1, x0
-    adrp x0, l1_kernel_pgt
-    msr ttbr1_el1, x0
-    
-    ldr x0, =TCR_VALUE
-    msr tcr_el1, x0
-    
-    ldr x1, =MAIR_VALUE
-    msr mair_el1, x1
-    
-    isb
-    tlbi vmalle1
-    dsb sy
-    isb
-
-    mrs x0, sctlr_el1
-    orr x0, x0, #1
-    msr sctlr_el1, x0
-    isb
-    
+secondary_entry:
+    set_mmu_regs
+    enable_mmu
 
     ldr x1, =p_entry_virt
     br x1
@@ -222,10 +152,7 @@ l2pgt_loop1:
 .section ".text"
 .global p_entry_virt
 p_entry_virt:
-    ldr x0, =CPACR_EL1_FPEN
-    msr cpacr_el1,x0
-    isb
-
+    enable_fp
     mrs x0, mpidr_el1
     and x0, x0, #0xff
     add x0, x0, #1
@@ -236,21 +163,6 @@ p_entry_virt:
     mov sp, x2
     bl boot_main
 
-secondary_entry:
-    adrp x0, l1_user_pgt
-    msr ttbr0_el1, x0
-    adrp x0, l1_kernel_pgt
-    msr ttbr1_el1, x0
-    ldr x0, =TCR_VALUE
-    msr tcr_el1, x0
-    ldr x1, =MAIR_VALUE
-    msr mair_el1, x1
-    
-    ldr x1, =p_entry_virt
-    mrs x0, sctlr_el1
-    orr x0, x0, #1
-    msr sctlr_el1, x0
-    br x1
 
 .global set_virt_stack
 set_virt_stack:
@@ -262,4 +174,4 @@ set_virt_stack:
 .global hang
 hang:
     wfe
-    b hang
+    b hang 
