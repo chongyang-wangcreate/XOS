@@ -264,10 +264,13 @@ void check_sw_parent_dentry(lookup_path_t *look_path)
         /*
             到达挂载点的根目录，(关键字挂载点)
         */
-        printk(PT_DEBUG,"%s:%d,mount_count=%d,dentry_cache->path_name=%s\n\r",__FUNCTION__,__LINE__,(*dentry_cache)->cur_mnt_count,(*dentry_cache)->file_name.path_name);
-        parent_mnt = (*mnt)->mount_parent;
-        *dentry_cache =(*mnt)->mount_point;  /*mnt 文件系统挂载到那个目录mnt 挂载到mountpoint 之上*/
-        *mnt = parent_mnt;
+        {
+            xmount_t *child_mnt = *mnt;
+            parent_mnt = child_mnt->mount_parent;
+            *mnt = parent_mnt;
+            *dentry_cache = child_mnt->mount_parent ?
+                child_mnt->mount_point_parent : child_mnt->mount_point;
+        }
     }
 }
 

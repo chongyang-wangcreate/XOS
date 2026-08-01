@@ -98,6 +98,7 @@ typedef struct xos_mount_desc{
     struct xos_mount_desc *mount_parent;
     mount_ops_t mnt_ops;
     xdentry *mount_point;
+    xdentry *mount_point_parent;
     xdentry *root_dentry;/*本文件系统的根*/
     xdentry *fs_root; /*本文件系统的根,多余了*/
     dlist_t link_children_list; /*挂到当前文件系统子文件系统，可能不止一个所以不使用struct xos_mount_desc *mount_child;*/

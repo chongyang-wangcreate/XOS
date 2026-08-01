@@ -326,6 +326,7 @@ int  attach_parent_mount(xmount_t *new_mnt,lookup_path_t *look_res, int mnt_flag
     }
     new_mnt->mount_parent = parent;
     new_mnt->mount_point = look_res->look_dentry; /*当前文件系统挂载点，look_res->look_dentry 属于父文件系统目录*/
+    new_mnt->mount_point_parent = look_res->look_dentry->parent_dentry;
     if(new_mnt->root_dentry){
         printk(PT_DEBUG,"@@@@@@@@@@@@%s:%d,new_mnt->root_dentry.name=%s\n\r",__FUNCTION__,__LINE__,new_mnt->root_dentry->file_name.path_name);
     }
@@ -459,6 +460,7 @@ int do_mount_at(const char *fs_name,int flags,char *mount_path,char *dev_name,vo
         list_init(&mnt_desc->link_parent_list);
         mnt_desc->mount_parent = mnt_desc;
         mnt_desc->mount_point = xspuper->root_dentry;
+        mnt_desc->mount_point_parent = xspuper->root_dentry;
         mnt_desc->root_dentry = xspuper->root_dentry;
 
         
