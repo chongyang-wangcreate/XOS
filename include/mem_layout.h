@@ -36,8 +36,8 @@ TTBR0_EL1 → L1用户页表 (l1upgt) -> L2用户页表 (l2upgt)
 #define VA_KERNEL_START      0xFFFFFF8000000000
 
 /* 物理内存布局（基于QEMU virt 1GB内存） */
-#define PHYS_MEM_START       0x40000000  /* 1GB内存起始 */
-#define PHYS_MEM_SIZE        (1 * 1024 * 1024 * 1024)  /* 1GB */
+#define PHYS_MEM_START       0x40000000UL  /* 1GB内存起始 */
+#define PHYS_MEM_SIZE        (1UL * 1024 * 1024 * 1024)  /* 1GB */
 #define PHYS_MEM_END         (PHYS_MEM_START + PHYS_MEM_SIZE - 1)
 
 /* ========== 已分配区域（不能被zone管理）========== */
@@ -122,11 +122,17 @@ extern uint8_t kernel_end[];
 
 #define MEM_PHY_START      0x40000000UL //0x40000000UL
 #define PHY_STOP        (MEM_PHY_START + RAM_SIZE)
-#define RAM_SIZE         (1024*1024*1024)
+#define RAM_SIZE         (1UL*1024*1024*1024)
 
 #define PHY_TMP_MAP_END         ( MEM_PHY_START + RAM_SIZE)
 
+#define KERNEL_BOOT_IDMAP_SIZE  0x60000UL
+#define KERNEL_LINEAR_MAP_START MEM_PHY_START
+#define KERNEL_LINEAR_MAP_SIZE  RAM_SIZE
+#define KERNEL_LINEAR_MAP_END   (KERNEL_LINEAR_MAP_START + KERNEL_LINEAR_MAP_SIZE)
 
+#define KERNEL_LINEAR_REST_START (KERNEL_LINEAR_MAP_START + KERNEL_BOOT_IDMAP_SIZE)
+#define KERNEL_LINEAR_REST_SIZE  (KERNEL_LINEAR_MAP_END - KERNEL_LINEAR_REST_START)
 #define FIR_MAP_SIZE	0x600000
 #define PHY_KERNMAP_START 	(MEM_PHY_START + FIR_MAP_SIZE )
 #define PHY_KERNMAP_END      (MEM_PHY_START + RAM_SIZE )
@@ -142,5 +148,7 @@ extern uint8_t kernel_end[];
 #define LINEAR_V2P_UL(x) (((unsigned long)(x)) - (unsigned long)VA_KERNEL_START)
 #define LINEAR_V2P(x)    ((void*)LINEAR_V2P_UL(x))
 
-
+#define XOS_FIXMAP_SLOTS   32
+#define XOS_FIXMAP_TOP     0xFFFFFFFFFFE000000UL
+#define XOS_FIXMAP_ADDR(idx) 
 #endif
