@@ -64,6 +64,8 @@ TTBR0_EL1 → L1用户页表 (l1upgt) -> L2用户页表 (l2upgt)
 extern uint64_t _load_addr_start;
 extern uint64_t kernel_end_phys;
 extern uint64 *kernel_pgtbl_tmp;
+extern void map_mem_maps(uint64 *kern_pgd);
+void xos_map_blocks(void *pgd,const xos_map_desc_t *maps,int nr_cnt);
 
 
 extern void *l1_kernel_pgt;  
@@ -255,7 +257,27 @@ int map_page(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot)
     return 0;
 }
 
-
+void map_mem(pgd_t *pgdir,const xos_map_desc_t *maps,int nr_cnt)
+{
+    int i;
+    if(pgdir == NULL || maps == NULL || nr_cnt <= 0){
+         xos_uart_puts("map_mem  NULL\n\r");
+        return ;
+    }
+    /*for(i = 0; i < nr_cnt ;i++){
+         if(((maps[i].virt | maps[i].phys | maps[i].size) & (PMD_SIZE -1)) == 0){
+            xos_map_blocks(pgdir,&maps[i],1);
+         }else{
+            boot_mem_3level_maps(pgdir,(void*)maps[i].virt,maps[i].size,
+            maps[i].phys,maps[i].attr);
+         }
+    }*/
+    for(i = 0; i < nr_cnt ;i++){
+        boot_mem_3level_maps(pgdir,(void*)maps[i].virt,maps[i].size,
+            maps[i].phys,maps[i].attr);
+    }
+    flush_tlb();
+}
 
 
 /*
@@ -303,6 +325,8 @@ extern char _load_addr_start_virt[];
 extern char kernel_end_phys_virt[];
 void all_phys_linear_map(void)
 {
+ //    map_mem_maps(l1_kernel_pgt);  
+ //    return ;
     /* 映射内核代码和数据区 */
     uint64_t p_start = (uint64_t)_load_addr_start_virt - VA_KERNEL_START;
     uint64_t p_end = (uint64_t)kernel_end_phys_virt - VA_KERNEL_START;
@@ -319,8 +343,9 @@ void all_phys_linear_map(void)
     xos_linear_maps(ZONE_USER_START, ZONE_USER_END);
     xos_linear_maps(ZONE_DMA_START, ZONE_DMA_END);
     
-   // printk(PT_DEBUG,"Linear mapping complete: 0x%lx - 0x%lx\n", 
-    //       ZONE_KERNEL_START, ZONE_DMA_END);
+    printk(PT_WARRING,"Linear mapping complete: 0x%lx - 0x%lx\n", 
+          ZONE_KERNEL_START, ZONE_DMA_END);
+   
 }
 
 pmd_t* get_pmd(pgd_t *pgdir, void *va)
@@ -384,7 +409,17 @@ void xos_2level_maps(uint64 *pgd,uint64 virt, uint64 phy, uint len, uint64 mm_at
     }
 
 }
-
+void xos_map_blocks(void *pgd,const xos_map_desc_t *maps,int nr_cnt)
+{
+    int i;
+    for(i = 0; i < nr_cnt ;i++){
+        xos_uart_puts("xos_map_blocks\n");
+        xos_2level_maps((uint64*)pgd,maps[i].virt,maps[i].phys,
+                                         maps[i].size,
+                                         maps[i].attr);
+        
+    }
+}
 /*
     通过va 找到对应的pa
 */
@@ -511,14 +546,14 @@ int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa,
     /*
         for 循环每次va pa 都移动4k 步长，
     */
+   
     for(;step_val < size ; step_val += PTE_ENTRY_SIZE){
         
         pgd = &pgdir[PGD_IDX((uint64)start)];  /*开始本来想直接使用*pgdir[PGD_IDX(uint64)va]&PG_4k_ADDR_MASK，太长了不美观*/
-        
         if(pt_entry_is_table(*pgd)){ /*判断一级页表页表项项是否有效*/
             pmd_array_base = (pmd_t*) P2V((*pgd) & PG_4k_ADDR_MASK);
         }else if(pt_entry_is_valid(*pgd)){
-            printk(PT_RUN,"%s:%d,pgd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pgd,
+            printk(PT_WARRING,"%s:%d,pgd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pgd,
          (unsigned long )start);
           return -1;
         }else{
@@ -526,7 +561,7 @@ int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa,
                 无效 申请页表空间，并将页表基地址放入pmd 对应的页表项中
             */
             pmd_array_base = (pmd_t*)boot_alloc_virt(4096);
-
+            xos_uart_puts("map_mem  else\n\r");
             memset(pmd_array_base, 0, PTE_ENTRY_SIZE);
             /*
                 二级某个页表创建完毕，并且将页表基地址加入到一级页表(我们也成为页目录)某个目录项中

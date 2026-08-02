@@ -11,6 +11,7 @@ static inline void set_ttbr0_el1(uint64 u_pgd)
 
 }
 extern int boot_init_early_map();
+extern void map_mem_maps(uint64 *kern_pgd);
 extern void clear_bss (void);
 extern void test_mmu_map_fun();
 extern void config_enable_mmu();

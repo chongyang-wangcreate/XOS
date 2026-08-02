@@ -25,6 +25,13 @@ typedef uint64 pud_t;
 typedef uint64  pmd_t;
 typedef uint64  pgd_t;
 
+typedef struct xos_map_desc{
+    uint64 virt;
+    uint64 phys;
+    uint64 size;
+    uint64 attr;
+}xos_map_desc_t;
+
 /*
 typedef struct struct_pgd
 {
@@ -56,6 +63,7 @@ extern int ptd_map(pmd_t *pmd_p, u64 vaddr, u64 end, u64 paddr, u64 attr);
 */
 extern void xos_linear_maps(uint64 phy_start, uint64 phy_end);
 extern int xos_pages_map(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot);
+extern void map_mem(pgd_t *pgdir,const xos_map_desc_t *maps,int nr_cnt);
 extern int map_page(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot);
 extern int xos_3level_one_pagemap (pgd_t *pgdir, void *va, unsigned long pa, uint64 prot);
 extern pte_t * copy_create_3level_page(pgd_t *pgdir, void *va);

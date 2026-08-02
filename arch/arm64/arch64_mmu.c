@@ -285,7 +285,44 @@ void config_mmu_regs (uint64* kern_pgtbl, uint64* user_pgtbl)
     boot_puts("mmu completed...\n");
 
 }
-  
+extern void xos_uart_puts(char *s);
+void map_mem_maps(uint64 *kern_pgd)
+{
+    const xos_map_desc_t mem_maps[] ={
+        {
+            .virt = LINEAR_P2V_UL(KERNEL_LINEAR_MAP_START),
+            .phys = KERNEL_LINEAR_MAP_START,
+            .size = KERNEL_BOOT_IDMAP_SIZE,
+            .attr = ATTR_UXN | PT_ATTRINDX(MT_NORMAL),
+        },
+        {
+            .virt = KERNEL_LINEAR_MAP_START,
+            .phys = KERNEL_LINEAR_MAP_START,
+            .size = KERNEL_BOOT_IDMAP_SIZE,
+            .attr = ATTR_UXN | PT_ATTRINDX(MT_NORMAL),
+        },
+        {
+            .virt = LINEAR_P2V_UL(KERNEL_LINEAR_REST_START),
+            .phys = KERNEL_LINEAR_REST_START,
+            .size = KERNEL_LINEAR_REST_SIZE,
+            .attr = ATTR_UXN | PT_ATTRINDX(MT_NORMAL),
+        },
+        {
+            .virt = LINEAR_P2V_UL(DEVMEM_RANGE1_BASE),
+            .phys = DEVMEM_RANGE1_BASE,
+            .size = 0X3000000,
+            .attr = PT_ATTRINDX(MT_DEVICE_nGnRnE),
+        },
+        {
+            .virt = DEVMEM_RANGE1_BASE,
+            .phys = DEVMEM_RANGE1_BASE,
+            .size = DEVMEM_MAP_SIZE,
+            .attr = PT_ATTRINDX(MT_DEVICE_nGnRnE),
+        },
+    };
+    map_mem(kern_pgd,mem_maps,sizeof(mem_maps)/sizeof(mem_maps[0]));
+
+}
 void kernel_early_mem_map(uint64 *kern_pgd)
 {
     // 现在这个函数只在 kernel_init 中调用，用于建立线性映射
