@@ -145,7 +145,9 @@ KERNEL_OBJ = \
     kernel/load_user2.o\
     kernel/xos_mutex.o\
     kernel/workqueue.o\
-    kernel/xos_sem.o
+    kernel/xos_sem.o \
+    kernel/device_tree.o \
+    kernel/memblock.o
 
 FS_OBJ = \
     fs/mount.o\
