@@ -27,6 +27,10 @@ static int str_eq(const char *a,const char *b);
 static void parse_node_prop(xos_dtb_node_t *node,const char *name,
                             const uint32 *data, uint32 len,
                             uint32 parent_addr_cells,uint32 parent_size_cells);
+
+static void parse_node_interrupts(xos_dtb_node_t *node,
+                                const uint32 *data ,uint32 len,
+                                uint32 interrupt_cells);                            
 #define align4(v)  align_down(v, 4)
 enum{
     NODE_OTHER = 0,
@@ -44,12 +48,12 @@ static uint32 fdt32_to_cpu(uint32 v)
 {
     return ((v & 0x000000ffU) << 24)|
            ((v & 0x0000ff00U) << 8) |
-           ((v & 0x00ff0000U) << 8) |
-           ((v & 0xff000000U) << 8);
+           ((v & 0x00ff0000U) >> 8) |
+           ((v & 0xff000000U) >> 24);
 }
 static uint64 fdt64_to_cpu(const uint32 *v)
 {
-    return ((uint64)fdt32_to_cpu(v[0] < 32) | fdt32_to_cpu(v[1]));
+    return ((uint64)fdt32_to_cpu(v[0]) << 32) | fdt32_to_cpu(v[1]);
 }
 
 int fdt_header_magic_ok(uint64 phys)
@@ -116,7 +120,9 @@ int xos_parse_dtb(void)
     xos_dtb_ctx_t dtb_ctx;
     init_dtb_related_bufs();
     init_parse_ctx(&dtb_ctx);
-    xos_parse_blob(&dtb_ctx);
+    if(xos_parse_blob(&dtb_ctx) < 0){
+        return -1;
+    }
     while(dtb_ctx.cur < dtb_ctx.struct_end){
         uint32 token;
         if((char*)dtb_ctx.cur + sizeof(uint32) > dtb_ctx.blob_end){
@@ -336,6 +342,7 @@ static int parse_current_node_prop(xos_dtb_ctx_t *ctx ,const char *prop_name,
     xos_dtb_node_t *node;
     uint32 parent_addr_cells;
     uint32 parent_size_cells;
+    uint32 parent_irq_cells;
 
     if(ctx->level <= 0 || ctx->level >= XOS_DTB_MAX_DEPTH||
        ctx->node_stack[ctx->level] < 0){
@@ -344,10 +351,14 @@ static int parse_current_node_prop(xos_dtb_ctx_t *ctx ,const char *prop_name,
     node = &g_dtb_nodes[ctx->node_stack[ctx->level]];
     parent_addr_cells = ctx->addr_cells_stack[ctx->level - 1];
     parent_size_cells = ctx->size_cells_stack[ctx->level - 1];
+    parent_irq_cells  = ctx->irq_cells_stack[ctx->level - 1];
     parse_node_prop(node,prop_name,data,len,parent_addr_cells,parent_size_cells);
     ctx->addr_cells_stack[ctx->level] = node->address_cells;
     ctx->size_cells_stack[ctx->level] = node->size_cells;
     ctx->irq_cells_stack[ctx->level] = node->interrupts_cells;
+    if(str_eq(prop_name,"interrupts")){
+        parse_node_interrupts(node,data,len,parent_irq_cells);
+    }
     return 0;
 }          
 

@@ -23,7 +23,8 @@ int xos_memblock_init()
     uint64 mem_end;
     uint64 reserved_start;
     uint64 reserved_end;
-
+    uint64 usable_start;
+    uint64 usable_end;
 
     memset(&g_memblock_info ,0,sizeof(g_memblock_info));
     if(dtb == NULL || !dtb->valid || dtb->mem_size == 0){
@@ -58,6 +59,17 @@ int xos_memblock_init()
         g_memblock_info.reserved.base = reserved_start;
         g_memblock_info.reserved.size = reserved_end - reserved_start + 1;
     }
+    usable_start = mem_start;
+    if(g_memblock_info.reserved.size != 0 &&
+       g_memblock_info.reserved.base <= usable_start){
+       usable_start = g_memblock_info.reserved.base + g_memblock_info.reserved.size;
+    }
+    usable_end = mem_end;
+    if(usable_start <= usable_end){
+        g_memblock_info.usable.base = usable_start;
+        g_memblock_info.usable.size = usable_end - usable_start + 1;
+    }
+    g_memblock_info.vaild = 1;
     return 0;
 
 }

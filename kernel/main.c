@@ -89,7 +89,7 @@ char idle_stack[1024];
 void clear_kbss (void)
 {
    // printk(PT_DEBUG,"clear_bss%s:%d\n\r",__FUNCTION__,__LINE__);
-    memset(__bss_start, 0x00, (unsigned long)__bss_end - (unsigned long)__bss_start);
+   // memset(__bss_start, 0x00, (unsigned long)__bss_end - (unsigned long)__bss_start);
 }
 
 
@@ -165,21 +165,14 @@ void kernel_init (void)
   // boot_puts("xos boot_main\n");
     xos_uart_init();
     boot_mem_init();
-    
     xos_set_vector_entry();
-    /*
-        to do 
-        printk_debug(){level = PT_DEBUG};
-        printk_run(){level = PT_RUN};
-    */
-   // printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
 
     all_phys_linear_map();
     xos_zone_init();
     mem_cache_init();
    // test_buddy();
 
-
+     xos_uart_puts("Hello from kernel_init 5\n");
     local_irq_disable();
     xos_irq_init();
     xos_uart_irq_init();
