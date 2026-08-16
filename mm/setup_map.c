@@ -339,9 +339,14 @@ void all_phys_linear_map(void)
     
     /* 映射所有zone的物理内存 */
     put_hex(ZONE_KERNEL_START);
-    xos_linear_maps(ZONE_KERNEL_START, ZONE_KERNEL_END);
+    /*xos_linear_maps(ZONE_KERNEL_START, ZONE_KERNEL_END);
     xos_linear_maps(ZONE_USER_START, ZONE_USER_END);
-    xos_linear_maps(ZONE_DMA_START, ZONE_DMA_END);
+    xos_linear_maps(ZONE_DMA_START, ZONE_DMA_END);*/
+
+    if(xos_zone_linear_map_start() != 0 &&
+    xos_zone_linear_map_end() >= xos_zone_linear_map_start()){
+        xos_linear_maps(xos_zone_linear_map_start(), xos_zone_linear_map_end());
+    }
     
     printk(PT_WARRING,"Linear mapping complete: 0x%lx - 0x%lx\n", 
           ZONE_KERNEL_START, ZONE_DMA_END);

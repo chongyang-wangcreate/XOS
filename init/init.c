@@ -85,11 +85,11 @@ void boot_puts (char *s)
 }
 
 
-void boot_main (void)
+void boot_main (uint64 dtb_phys)
 {
     boot_uart_init((uint32*)UART0_VIRT);
     boot_log("boot main","handoff to kernel_init");
-    kernel_init();
+    kernel_init(dtb_phys);
 }
 
 void other_boot_main()

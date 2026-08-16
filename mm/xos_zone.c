@@ -50,6 +50,7 @@
 #include "xos_zone.h"
 #include "spinlock.h"
 #include "uart.h"
+#include "memblock.h"
 
 #define NORMAL_PAGE_SIZE (1 << 12)
 extern uint8_t _kernel_page_array_start[];
@@ -59,10 +60,22 @@ extern uint8_t _user_page_array_end[];
 extern uint8_t _dma_page_array_start[];
 extern uint8_t _dma_page_array_end[];
 
-xos_zone_t zone_normal;
-xos_zone_t zone_dma;
-xos_zone_t zone_user;
+/* Zone 全局变量 */
+xos_zone_t zone_normal = {0};
+xos_zone_t zone_user = {0};
+xos_zone_t zone_dma = {0};
 xos_zone_t zone_areas[ZONE_MAX];
+static uint64 g_zone_linear_map_start;
+static uint64 g_zone_linear_map_end;
+int g_zone_layout_set_done;
+
+/* 声明外部符号（来自lds） */
+extern uint8_t _zone_metadata_start[];
+extern uint8_t _kernel_page_array_start[];
+extern uint8_t _user_page_array_start[];
+extern uint8_t _dma_page_array_start[];
+extern void put_hex(uint64_t val);
+
 
 static xos_zone_layout_t  zone_layouts[ZONE_MAX] = {
 
@@ -98,7 +111,7 @@ uint64 xos_get_zone_page_counts(const xos_zone_layout_t *layout)
 
 }
 
-static void xos_build_zone_layout(void)
+/*static void xos_build_zone_layout(void)
 {
     uint64 start = ZONE_KERNEL_START;
     int i;
@@ -109,7 +122,7 @@ static void xos_build_zone_layout(void)
 
     }
 
-}
+}*/
 
 const xos_zone_layout_t *xos_get_zone_layouts(int *count)
 {
@@ -354,47 +367,93 @@ int xos_insert_to_buddy(xos_zone_t *zone)
 
 
 
-
-void test_buddy()
+static uint64 get_min(uint64 a,uint64 b)
 {
-    xos_page_t *ptr = xos_get_page(&zone_normal,0);
-    printk(PT_DEBUG,"%s:%d,xxxxxxxxxptr_addr=%llx\n\r",__FUNCTION__,__LINE__,(long long)ptr);
+    return a < b ? a:b;
+}
+static int xos_set_zone_layouts(void)
+{
+    xos_memblock_info_t *memblock = xos_memblock_get_info();
+    uint64 usable_start;
+    uint64 usable_end;
+    uint64 remaining_size;
+    uint64 start;
+    uint64 default_size[ZONE_MAX];
+    uint64 total_desired_size;
+    uint64 tail_keep;
+    uint64 size;
+    int i;
+    if(memblock == NULL || !memblock->vaild || memblock->usable.size == 0){
+        return -1;
+    }
+    usable_start = ALIGN_UP(memblock->usable.base,PAGE_SIZE);
+    usable_end = ALIGN_DOWN(memblock->usable.base + memblock->usable.size,PAGE_SIZE);
+    if(usable_end <= usable_start){
+        return -1;
+    }
+    remaining_size = usable_end - usable_start;
+    start = usable_start;
+    default_size[ZONE_KERNEL] = 128UL * 1024UL *1024UL;
+    default_size[ZONE_USER]   = 128UL * 1024UL *1024UL;
+    default_size[ZONE_DMA]    = 128UL * 1024UL *1024UL;
+    total_desired_size = default_size[ZONE_KERNEL] + default_size[ZONE_USER] + default_size[ZONE_DMA];
 
-    printk(PT_DEBUG,"addr0 = %lx\n\r",XOS_PAGE_TO_PHY(ptr));
+    for(i = 0; i < ZONE_MAX ;i++){
+        uint64 max_pages = xos_get_zone_page_counts(&zone_layouts[i]);
+        size = get_min(default_size[i],remaining_size);
+        if(remaining_size < total_desired_size){
+            if(i == ZONE_KERNEL){
+                size = remaining_size / 2;
+            }else if(i == ZONE_USER){
+                size = remaining_size - (remaining_size / 2);
+            }else{
+                size = 0;
+            }
+        }
+        if(i + 1 < ZONE_MAX){
+            tail_keep = (ZONE_MAX -i -1)*PAGE_SIZE;
+            if(remaining_size > tail_keep && size > (remaining_size - tail_keep)){
+                size = remaining_size - tail_keep;
+            }
+        }
+        size = ALIGN_DOWN(size,PAGE_SIZE);
+        if(size > (max_pages << PAGE_SHIFT)){
+            size = max_pages << PAGE_SHIFT;
+        }
+        zone_layouts[i].start = start;
+        zone_layouts[i].size = size;
+        if(size != 0){
+            zone_layouts[i].end = start + size -1;
+            start += size;
+            remaining_size -= size;
+        }else{
+            zone_layouts[i].end = start ?(start - 1):0;
+        }
+    }
+    g_zone_linear_map_start = zone_layouts[ZONE_KERNEL].size;
     
-    ptr = xos_get_page(&zone_normal,0);
-    printk(PT_DEBUG,"%s:%d,xxxxxxxxxptr_addr=%llx\n\r",__FUNCTION__,__LINE__,(long long)ptr);
+    for(i = ZONE_MAX -1 ;i >= 0; i--){
+        if(zone_layouts[i].size != 0){
+            g_zone_linear_map_end = zone_layouts[i].end;
+        }
+    }
+    g_zone_layout_set_done = 1;
+    return 0;
 
-
-
-    ptr = xos_get_page(&zone_normal,4);
-    printk(PT_DEBUG,"%s:%d,xxxxxxxxxptr_addr=%llx\n\r",__FUNCTION__,__LINE__,(long long)PHY_TO_VIRT((XOS_PAGE_TO_PHY(ptr))));
-    printk(PT_DEBUG,"ptr->order=%d\n\r",ptr->order);
-
-
-    
-    ptr = xos_get_page(&zone_user,4);
-     printk(PT_DEBUG,"ptr->order=%d\n\r",ptr->order);
-    
-    /*
-    ptr = xos_get_page(&zone_dma,4);
-    printk("%s:%d,zone_dma  ptr_addr=%llx\n\r",__FUNCTION__,__LINE__,(long long)(ptr));
-    printk("zone_dma  ptr->order=%d\n\r",ptr->order);
-    */
 }
 
-
-/* 声明外部符号（来自lds） */
-extern uint8_t _zone_metadata_start[];
-extern uint8_t _kernel_page_array_start[];
-extern uint8_t _user_page_array_start[];
-extern uint8_t _dma_page_array_start[];
-extern void put_hex(uint64_t val);
-/* Zone 全局变量 */
-xos_zone_t zone_normal = {0};
-xos_zone_t zone_user = {0};
-xos_zone_t zone_dma = {0};
-
+uint64 xos_zone_linear_map_start(void)
+{
+    return g_zone_linear_map_start;
+}
+uint64 xos_zone_linear_map_end(void)
+{
+    return g_zone_linear_map_end;
+}
+int xos_zone_set()
+{
+    return xos_set_zone_layouts();
+}
 void zone_early_init(void)
 {
     int i;
@@ -404,9 +463,14 @@ void zone_early_init(void)
         &zone_user,
         &zone_dma,
     };
-    xos_build_zone_layout();
+    if(!g_zone_layout_set_done){
+        return ;
+    }
+   // xos_build_zone_layout();
     for(i = 0; i < ZONE_MAX ; i++){
-
+        if(zone_layouts[i].size == 0){
+            continue;
+        }
         xos_zone_bind(zones[i],&zone_layouts[i]);
         xos_insert_to_buddy(zones[i]);
     }
@@ -448,50 +512,6 @@ void zone_init(xos_zone_t * zone_area, int zone_id)
 
 
 
-int  single_zone_init(uint32 phy_page_start,uint32 phy_page_end, uint32_t zone_phy_start,uint32_t zone_phy_end,int zone_id)
-{
-
-    /*
-        zone_phy_start 向上4K 对齐
-        zone_phy_end   向下4K 对齐
-
-        z_vmempage 这个当前不能改变，都是提前规划好的，后续
-        z_vmmempage 赋值设置成从函数获取
-
-    */
-    int i;
-    xos_zone_t *cur_zone = NULL;
-    uint32_t zone_phy_start_align = align_up(zone_phy_start, PAGE_SIZE);
-    uint32_t zone_phy_end_align =   align_down(zone_phy_end, PAGE_SIZE);
-    uint32_t zone_size = zone_phy_end_align - zone_phy_start_align;
-    if(zone_id > ZONE_MAX){
-        return -1; //非法参数
-    }
-    cur_zone = &zone_areas[zone_id];
-
-    cur_zone->z_vm_cnt = ((phy_page_end - phy_page_start) >> PAGE_SHIFT);
-    cur_zone->z_pfn_cnt = (zone_size >> PAGE_SHIFT);
-    cur_zone->z_vmempage = (xos_page_t*)PHY_TO_VIRT(phy_page_start);
-    cur_zone->free_pages = cur_zone->z_pfn_cnt;
-    cur_zone->start_pfn = zone_phy_start_align >> PAGE_SHIFT;
-    cur_zone->end_pfn = zone_phy_end_align >> PAGE_SHIFT;
-    for(i = 0;i < cur_zone->z_pfn_cnt;i++){
-        cur_zone->z_vmempage[i].idle_flags = 0; /*设置当前page 为空闲状态*/
-        cur_zone->z_vmempage[i].order = -1; /*当前order值设置成0阶*/
-    }
-
-    
-    for (i = 0 ;i< MAX_ORDER; i++){
-        
-        list_init(&cur_zone->free_area[i].free_list);
-        cur_zone->free_area[i].order = i;
-    }
-    
-    return 0;
-}
-
-
-
 
 void xos_zone_init()
 {
@@ -499,3 +519,24 @@ void xos_zone_init()
     
 }
 
+void test_buddy()
+{
+    xos_page_t *ptr = xos_get_page(&zone_normal,0);
+    printk(PT_DEBUG,"%s:%d,xxxxxxxxxptr_addr=%llx\n\r",__FUNCTION__,__LINE__,(long long)ptr);
+
+    printk(PT_DEBUG,"addr0 = %lx\n\r",XOS_PAGE_TO_PHY(ptr));
+    
+    ptr = xos_get_page(&zone_normal,0);
+    printk(PT_DEBUG,"%s:%d,xxxxxxxxxptr_addr=%llx\n\r",__FUNCTION__,__LINE__,(long long)ptr);
+
+
+
+    ptr = xos_get_page(&zone_normal,4);
+    printk(PT_DEBUG,"%s:%d,xxxxxxxxxptr_addr=%llx\n\r",__FUNCTION__,__LINE__,(long long)PHY_TO_VIRT((XOS_PAGE_TO_PHY(ptr))));
+    printk(PT_DEBUG,"ptr->order=%d\n\r",ptr->order);
+
+    ptr = xos_get_page(&zone_user,4);
+    printk(PT_DEBUG,"ptr->order=%d\n\r",ptr->order);
+    
+
+}

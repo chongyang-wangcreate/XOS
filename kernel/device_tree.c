@@ -7,7 +7,7 @@
 #include "device_tree.h"
 #include "spinlock.h"
 #include "xos_mutex.h"
-#include "xos_kern_def.h"
+//#include "xos_kern_def.h"
 
 static int handle_begin_node(xos_dtb_ctx_t *ctx);
 static void handle_end_node(xos_dtb_ctx_t *ctx);
@@ -31,7 +31,7 @@ static void parse_node_prop(xos_dtb_node_t *node,const char *name,
 static void parse_node_interrupts(xos_dtb_node_t *node,
                                 const uint32 *data ,uint32 len,
                                 uint32 interrupt_cells);                            
-#define align4(v)  align_down(v, 4)
+
 enum{
     NODE_OTHER = 0,
     NODE_ROOT,
@@ -54,6 +54,11 @@ static uint32 fdt32_to_cpu(uint32 v)
 static uint64 fdt64_to_cpu(const uint32 *v)
 {
     return ((uint64)fdt32_to_cpu(v[0]) << 32) | fdt32_to_cpu(v[1]);
+}
+
+static uint32 align4(uint32 v)
+{
+    return (v + 3U) & ~3U;
 }
 
 int fdt_header_magic_ok(uint64 phys)
@@ -81,25 +86,29 @@ static void init_parse_ctx(xos_dtb_ctx_t *ctx)
 
 static int xos_parse_blob(xos_dtb_ctx_t *ctx)
 {
-    ctx->fdt_header  = (const fdt_header_t*)LINEAR_P2V(g_boot_dtb_phys);
-    if(fdt32_to_cpu(ctx->fdt_header->magic) != FDT_MAGIC){
+    const fdt_header_t *hdr;
+    uint32 off_dt_struct;
+    uint32 size_dt_struct;
+    hdr  = (const fdt_header_t*)LINEAR_P2V(g_boot_dtb_phys);
+    if(fdt32_to_cpu(hdr->magic) != FDT_MAGIC){
         return -1;
     }
-    g_dtb_info.total_size = fdt32_to_cpu(ctx->fdt_header->totalsize);
+    g_dtb_info.total_size = fdt32_to_cpu(hdr->totalsize);
     if(g_dtb_info.total_size < sizeof(fdt_header_t)||
        g_dtb_info.total_size > (16*1024*1024UL)){
        return -1;
     }
+    off_dt_struct = fdt32_to_cpu(hdr->off_dt_struct);
+    size_dt_struct = fdt32_to_cpu(hdr->size_dt_struct);
+    ctx->fdt_header = hdr;
     g_dtb_info.version = fdt32_to_cpu(ctx->fdt_header->version);
     g_dtb_info.last_comp_version = fdt32_to_cpu(ctx->fdt_header->last_comp_version);
     g_dtb_info.address_cells = FDT_DEFAULT_ADDR_CELLS;
     g_dtb_info.size_cells = FDT_DEFAULT_SIZE_CELLS;
     
-    ctx->blob_end = ((const char*)ctx->fdt_header + g_dtb_info.total_size);
-    ctx->cur = (uint32*)((const char*)ctx->fdt_header + fdt32_to_cpu(ctx->fdt_header->off_dt_struct));
-    ctx->struct_end = (const uint32*)((const char *)ctx->fdt_header + 
-    fdt32_to_cpu(ctx->fdt_header->off_dt_struct) +
-    fdt32_to_cpu(ctx->fdt_header->size_dt_struct));
+    ctx->blob_end = ((const char*)hdr + g_dtb_info.total_size);
+    ctx->cur = (uint32*)((const char*)hdr + off_dt_struct);
+    ctx->struct_end = (const uint32*)((const char *)ctx->cur + size_dt_struct);
     return 0;
 }
 static int init_dtb_related_bufs(void)
@@ -108,10 +117,12 @@ static int init_dtb_related_bufs(void)
     memset(g_dtb_nodes,0,sizeof(g_dtb_nodes));
     g_dtb_node_count = 0;
     g_dtb_info.load_phys = g_boot_dtb_phys;
+    g_dtb_info.address_cells = FDT_DEFAULT_ADDR_CELLS;
+    g_dtb_info.size_cells    = FDT_DEFAULT_SIZE_CELLS;
     return 0;
 }
 
-const xos_dtb_desc_t *xos_dtb_get_info()
+ xos_dtb_desc_t *xos_dtb_get_info()
 {
     return &g_dtb_info;
 }
@@ -146,6 +157,7 @@ int xos_parse_dtb(void)
             continue;
         }
         if(token == FDT_PROP){
+            printk(PT_ERROR,"%s:%d\n\r",__FUNCTION__,__LINE__);
             if(handle_prop(&dtb_ctx) < 0){
                 return -1;
             }
@@ -192,10 +204,16 @@ xos_dtb_node_t *xos_dtb_find_compatible(const char *compatible)
     }
     return 0;
 }
-static unsigned long bounded_len(const char *s ,const char *limit)
+static uint64 bounded_len(const char *s ,const char *limit)
 {
-    
-    return 0;
+    const char *p_cur = s;
+    while(p_cur < limit && *p_cur != '\0'){
+        p_cur++;
+    }
+    if(p_cur >= limit){
+        return (uint64)(limit - s);
+    }
+    return (uint64)(p_cur - s);
 }
 
 static int handle_begin_node(xos_dtb_ctx_t *ctx)
@@ -205,7 +223,7 @@ static int handle_begin_node(xos_dtb_ctx_t *ctx)
     char node_name[64];
     unsigned int copy_len;
 
-    if(name + name_len >= ctx->blob_end){
+    if(name + name_len > ctx->blob_end){
         return -1;
     }
     copy_len = (name_len < sizeof(node_name) - 1)?
@@ -213,7 +231,7 @@ static int handle_begin_node(xos_dtb_ctx_t *ctx)
     memset(node_name,0,sizeof(node_name));
     memcpy(node_name,name,copy_len);
     node_name[copy_len] = '\0';
-    
+    printk(PT_ERROR,"node_name=%s:%d\n\r",node_name,__LINE__);
     ctx->cur = (const uint32*)(char*)ctx->cur + align4(name_len + 1); //next
     ctx->level++;
     if(ctx->level >= XOS_DTB_MAX_DEPTH){
@@ -225,6 +243,9 @@ static int handle_begin_node(xos_dtb_ctx_t *ctx)
         ctx->path_stack[ctx->level][1] = '\0';
         return 0;
     }
+    ctx->addr_cells_stack[ctx->level] = ctx->addr_cells_stack[ctx->level - 1];
+    ctx->size_cells_stack[ctx->level] = ctx->size_cells_stack[ctx->level - 1];
+    ctx->irq_cells_stack[ctx->level]  = ctx->irq_cells_stack[ctx->level - 1];
     if(ctx->level == 1){
         classify_level1_node(ctx,node_name);
     }else{
@@ -261,6 +282,7 @@ static int handle_prop(xos_dtb_ctx_t *ctx)
     len = fdt32_to_cpu(*ctx->cur++);
     nameoff = fdt32_to_cpu(*ctx->cur++);
     prop_name = fdt_get_string(ctx->fdt_header,nameoff);
+    printk(PT_ERROR,"prop_name=%s\n\r",prop_name);
     data = ctx->cur;
     if((char*)data + len > ctx->blob_end){
         return -1;
@@ -281,9 +303,11 @@ static int parse_common_prop(xos_dtb_ctx_t *ctx,const char *prop_name,
         return 0;
     }
     if(ctx->level == 1){
+        printk(PT_ERROR,"%s:ctx->node_type=%d\n\r",__FUNCTION__,ctx->node_type);
         if(ctx->node_type == NODE_CHOSEN){
             parse_chosen_prop(&g_dtb_info,prop_name,data,len);
-        }else if(ctx->node_type == NODE_MEMORY && strcmp(prop_name,"reg")){
+        }else if(ctx->node_type == NODE_MEMORY && !strcmp(prop_name,"reg")){
+            printk(PT_ERROR,"%s:ctx->node_type=%d\n\r",__FUNCTION__,ctx->node_type);
             parse_memory_reg(&g_dtb_info,data,len);
         }
     }
@@ -291,7 +315,7 @@ static int parse_common_prop(xos_dtb_ctx_t *ctx,const char *prop_name,
 
 }
 
-static void parse_u32_prop(xos_dtb_desc_t *info,const char *name,const uint32 *data,uint32 len)
+/*//static void parse_u32_prop(xos_dtb_desc_t *info,const char *name,const uint32 *data,uint32 len)
 {
     if(len < sizeof(uint32)){
         return ;
@@ -301,18 +325,21 @@ static void parse_u32_prop(xos_dtb_desc_t *info,const char *name,const uint32 *d
     }else if (str_eq(name,"#size-cells")){
         info->size_cells = fdt32_to_cpu(data[0]);
     }
-}
+}*/
 static void parse_root_prop(xos_dtb_desc_t *info,const char *name,const uint32 *data,uint32 len)
 {
-    parse_u32_prop(info ,name,data,len);
-    if(str_eq(name,"model")){
+    if(str_eq(name,"#address-cells")){
+        info->address_cells = fdt32_to_cpu(data[0]);
+    }else if (str_eq(name,"#size-cells")){
+        info->size_cells = fdt32_to_cpu(data[0]);
+    }else if(str_eq(name,"model")){
         strncpy(info->model,(const char*)data,sizeof(info->model));
     }
 }
 
 static void parse_chosen_prop(xos_dtb_desc_t *info,const char *name,const uint32 *data,uint32 len)
 {
-    if(strcmp(name,"bootargs")){
+    if(!strcmp(name,"bootargs")){
         strncpy(info->bootrags,(const char*)data,sizeof(info->bootrags));
     }
 }
@@ -328,7 +355,7 @@ static void parse_memory_reg(xos_dtb_desc_t *info,const uint32 *data,uint32 len)
         info->mem_start = fdt32_to_cpu(data[0]);
         data += 1;
     }
-
+    printk(PT_ERROR,"%s=%d\n\r",__FUNCTION__,__LINE__);
     if(size_cells == 2){
         info->mem_size = fdt64_to_cpu(data);
     }else{
@@ -370,6 +397,18 @@ static int str_eq(const char *a,const char *b)
     }
     return *a == *b;
 }
+
+/*static int str_starts_value(const char *s,const char *prefix)
+{
+    while(*prefix){
+        if(*s != *prefix){
+            return 0;
+        }
+        s++;
+        prefix++;
+    }
+    return 1;
+}*/
 
 static int compare_string(const char *s,const char *prefix)
 {
@@ -502,6 +541,7 @@ static void parse_node_prop(xos_dtb_node_t *node,const char *name,
         }
     }else if(str_eq(name,"#address-cells") && len >= sizeof(uint32)){
         node->address_cells = fdt32_to_cpu(data[0]);
+        printk(PT_ERROR,"node->address_cells=%d\n\r",node->address_cells);
     }else if(str_eq(name,"#size_cells") && len >= sizeof(uint32)){
         node->size_cells = fdt32_to_cpu(data[0]);
     }else if(str_eq(name,"#interrupt-cells") && len >= sizeof(uint32)){
@@ -521,17 +561,19 @@ static int add_dtb_node(xos_dtb_ctx_t *ctx,const char *node_name)
     ctx->size_cells_stack[ctx->level] = ctx->size_cells_stack[parent];
     ctx->irq_cells_stack[ctx->level]  = ctx->irq_cells_stack[parent];
 
-    make_node_path(ctx->path_stack[ctx->level],sizeof(ctx->path_stack[ctx->level]),
-                                   ctx->path_stack[parent],node_name);
+   
     if(g_dtb_node_count >= XOS_DTB_MAX_NODES){
         ctx->node_stack[ctx->level] = 1;
         return 0;
     }
+    make_node_path(ctx->path_stack[ctx->level],sizeof(ctx->path_stack[ctx->level]),
+                                   ctx->path_stack[parent],node_name);
     node = &g_dtb_nodes[g_dtb_node_count];
     memset(node,0,sizeof(*node));
     strncpy(node->name,node_name,sizeof(node->name));
     strncpy(node->path,(const char*)ctx->path_stack[ctx->level],sizeof(node->path));
-
+    printk(PT_ERROR,"node->name=%d\n\r",node->name);
+    printk(PT_ERROR,"node->path=%d\n\r",node->path);
     node->address_cells = ctx->addr_cells_stack[ctx->level];
     node->size_cells = ctx->size_cells_stack[ctx->level];
     node->interrupts_cells = ctx->irq_cells_stack[ctx->level];
@@ -544,12 +586,38 @@ static int add_dtb_node(xos_dtb_ctx_t *ctx,const char *node_name)
 
 static void classify_level1_node(xos_dtb_ctx_t *ctx,const char *node_name)
 {
+    printk(PT_ERROR,"%s:node_name=%s:%d\n\r",__FUNCTION__,node_name,__LINE__);
     if(compare_string(node_name,"chosen")){
         ctx->node_type = NODE_CHOSEN;
     }else if(compare_string(node_name,"memory")){
-        ctx->node_type = NODE_MEMORY;
+        ctx->node_type = NODE_MEMORY;      
     }else{
         ctx->node_type = NODE_OTHER;
     }
 }
 
+int xos_dtb_init(void)
+{
+    int ret = 0;
+    printk(PT_DEBUG,"dtb init start\n\r");
+    if(g_boot_dtb_phys < PHYS_MEM_START || g_boot_dtb_phys > PHYS_MEM_END){
+        printk(PT_ERROR,"dtb invalid boot phys=0x%lx\n\r",g_boot_dtb_phys);
+        return -1;
+    }
+    ret = xos_parse_dtb();
+    if(ret < 0){
+        printk(PT_ERROR,"dtb xos_parse_dtb failed\n\r");
+        return -1;
+    }
+    printk(PT_ERROR,"dtb init done\n\r");
+    return 0;
+
+}
+
+void xos_dtb_set_boot_phys(uint64 phys)
+{
+    if(phys == 0){
+        phys = 0x58000000UL;
+    }
+    g_boot_dtb_phys = phys;
+}

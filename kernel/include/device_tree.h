@@ -1,6 +1,7 @@
 #ifndef __XOS_DEVICE_TREE_H__
-#define __XOS_DEVICE_TREEE_H__
+#define __XOS_DEVICE_TREE_H__
 
+#include "types.h"
 
 #define XOS_DTB_MAX_NODES  64
 #define XOS_DTB_MAX_DEPTH  16
@@ -99,6 +100,9 @@ typedef struct xos_dtb_ctx{
 
 }xos_dtb_ctx_t;
 
-const xos_dtb_desc_t *xos_dtb_get_info();
-
+extern  xos_dtb_desc_t *xos_dtb_get_info();
+extern void xos_dtb_set_boot_phys(uint64 phys);
+extern int xos_dtb_init(void);
+extern int xos_parse_dtb(void);
+uint64 xos_dtb_detect_phys(void);
 #endif

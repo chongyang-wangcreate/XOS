@@ -11,24 +11,33 @@ extern uint8_t _kernel_page_array_end[];
 
 static xos_memblock_info_t g_memblock_info;
 
-const xos_memblock_info_t *xos_memblock_get_info(void)
+static uint64 align_up_u64(uint64 val,uint64 align)
+{
+    return (val + align -1) & ~(align - 1);
+}
+
+static uint64 align_down_u64(uint64 val,uint64 align)
+{
+    return val & ~(align - 1);
+}
+
+xos_memblock_info_t *xos_memblock_get_info(void)
 {
     return &g_memblock_info;
 }
 
 int xos_memblock_init()
 {
-    const xos_dtb_desc_t *dtb = xos_dtb_get_info();
+    xos_dtb_desc_t *dtb = xos_dtb_get_info();
     uint64 mem_start;
     uint64 mem_end;
     uint64 reserved_start;
     uint64 reserved_end;
     uint64 usable_start;
     uint64 usable_end;
-
     memset(&g_memblock_info ,0,sizeof(g_memblock_info));
     if(dtb == NULL || !dtb->valid || dtb->mem_size == 0){
-        printk(PT_ERROR,"memblock:dtb memory is not available\n\r");
+        printk(PT_ERROR,"dtb->mem_size=%d\n\r",dtb->mem_size);
         return -1;
     }
     mem_start = dtb->mem_start;
@@ -40,6 +49,7 @@ int xos_memblock_init()
         mem_start = PHYS_MEM_END;
     }
     if(mem_end < mem_start){
+        printk(PT_ERROR,"%s:%d\n\r",__FUNCTION__,__LINE__);
         return -1;
     }
     g_memblock_info.memory.base = mem_start;
@@ -61,10 +71,12 @@ int xos_memblock_init()
     }
     usable_start = mem_start;
     if(g_memblock_info.reserved.size != 0 &&
-       g_memblock_info.reserved.base <= usable_start){
-       usable_start = g_memblock_info.reserved.base + g_memblock_info.reserved.size;
+       reserved_start <= mem_start &&
+       reserved_end >= mem_start){
+       usable_start = reserved_end + 1;
     }
-    usable_end = mem_end;
+    usable_start = align_up_u64(usable_start,XOS_MEMBLOCK_ALIGN);
+    usable_end   = align_down_u64(mem_end + 1,XOS_MEMBLOCK_ALIGN);;
     if(usable_start <= usable_end){
         g_memblock_info.usable.base = usable_start;
         g_memblock_info.usable.size = usable_end - usable_start + 1;

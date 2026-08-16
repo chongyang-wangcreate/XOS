@@ -1,7 +1,7 @@
 #ifndef __XOS_KERN_DEF_H__
 #define __XOS_KERN_DEF_H__
 
-
+#include "types.h"
 #include "list.h"
 #include "spinlock.h"
 #include "pt_frame.h"
@@ -18,7 +18,7 @@ typedef uint64  pgd_t;
 #define KERNEL_STACK_SIZE 8192
 
 #define align_up(x, align)    (uint64)(((uint64)(x) +  (align - 1)) & ~(align - 1))
-#define align_down(x, align) ((uint64)(x) & ~((uint64)(align)-1))
+#define align_down(x,align) ((uint64)((uint64)(x) & ~(align -1)))
 
 
 #define PAGE_SIZE (1<< 12)

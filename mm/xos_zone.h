@@ -1,11 +1,15 @@
 #ifndef __XOS_ZONE_H__
 #define __XOS_ZONE_H__
 
-#define	MAX_ORDER	11
 
+
+#include "types.h"
+#include "list.h"
 #include "mem_layout.h"
 #include "spinlock.h"
 #include "xos_page.h"
+
+#define	MAX_ORDER	11
 
 enum {
     ZONE_KERNEL,
@@ -16,9 +20,9 @@ enum {
 
 
 typedef struct free_area_struct {
-	struct list_head 	free_list;
-    uint32_t        order;
-	uint32_t 		node_nfree;
+	dlist_t	   free_list;
+    uint32_t   order;
+	uint32_t   node_nfree;
 }free_area_t;
 
 
@@ -51,7 +55,9 @@ typedef struct xos_zone_layout{
 }xos_zone_layout_t;
 //#define MEM_PAGE_SIZE      (60*1024*1024)
 
-
+extern xos_zone_t zone_normal;
+extern xos_zone_t zone_user;
+extern xos_zone_t zone_dma;
 
 #define XOS_PAGE_TO_PFN(page) (page - zone_normal.z_vmempage + zone_normal.start_pfn)
 #define XOS_PFN_TO_PAGE(pfn)  (zone_normal.z_vmempage +pfn -zone_normal.start_pfn)
@@ -74,5 +80,8 @@ extern void mem_init();
 extern void xos_zone_init();
 extern const xos_zone_layout_t *xos_get_zone_layouts(int *count);
 extern void test_buddy();
+extern uint64 xos_zone_linear_map_start(void);
+extern uint64 xos_zone_linear_map_end(void);
+extern int xos_zone_set();
 
 #endif

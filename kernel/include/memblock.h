@@ -15,5 +15,5 @@ typedef struct xos_memblock_info{
 }xos_memblock_info_t;
 
 extern int xos_memblock_init();
-extern const xos_memblock_info_t *xos_memblock_get_info(void);
+extern  xos_memblock_info_t *xos_memblock_get_info(void);
 #endif

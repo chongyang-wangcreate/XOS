@@ -3,6 +3,7 @@
 
 .equ VA_KERNEL_START,       0xFFFFFF8000000000
 .equ PHYS_MEM_START,        0x40000000
+.equ BOOR_EARLY_MAP_END,     0x60000000
 .equ DEVICE_MEM_START,      0x08000000      /* 注意：应该是0x08000000，不是0x09000000 */
 .equ DEVICE_MEM_END,        0x3FFFFFFF
 .equ UART0_PHYS,            0x09000000
@@ -90,11 +91,11 @@
 .endm
 
 .macro install_boot_page_tables
-    map_l2_blocks l2_user_pgt,PHYS_MEM_START,(kernel_end_phys -1),0,PTE_KERNEL_FLAGS
+    map_l2_blocks l2_user_pgt,PHYS_MEM_START,(BOOR_EARLY_MAP_END -1),0,PTE_KERNEL_FLAGS
     install_l1_table l1_user_pgt,l2_user_pgt,PHYS_MEM_START
 
     map_l2_blocks l2_kernel_pgt0,DEVICE_MEM_START,DEVICE_MEM_END,VA_KERNEL_START,PTE_DEVICE_FLAGS
-    map_l2_blocks l2_kernel_pgt1,PHYS_MEM_START,(kernel_end_phys -1),VA_KERNEL_START,PTE_KERNEL_FLAGS
+    map_l2_blocks l2_kernel_pgt1,PHYS_MEM_START,(BOOR_EARLY_MAP_END -1),VA_KERNEL_START,PTE_KERNEL_FLAGS
 
     install_l1_table l1_kernel_pgt,l2_kernel_pgt0,(VA_KERNEL_START + DEVICE_MEM_START)
     install_l1_table l1_kernel_pgt,l2_kernel_pgt1,(VA_KERNEL_START + PHYS_MEM_START)
@@ -127,6 +128,7 @@
 .global _start
 
 _start:
+    mov x20, x0
     mrs x1, mpidr_el1
     and x1, x1, #0xff
     cbz x1, primary_start
@@ -161,6 +163,7 @@ p_entry_virt:
     ldr x2, =main_stack_top
     add x2, x2, x0
     mov sp, x2
+    mov x0, x20
     bl boot_main
 
 

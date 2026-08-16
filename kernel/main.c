@@ -59,6 +59,8 @@
 #include "arch64_irq.h"
 #include "boot_mem.h"
 #include "uart.h"
+#include "device_tree.h"
+#include "memblock.h"
 
 /********************************************************************************************
 
@@ -71,6 +73,8 @@
 
     2024.0602：开发操作系统必须有毅力，有激情，并且是在对系统有充分理解的情况下，
     写之前有很好的基础非常必要，我为此准备了好几年，现在终于有一点点成果了,非常小的成果
+
+    2026.08.15:
 ************************************************************************************************/
 
 extern void * exce_vectors;
@@ -158,15 +162,28 @@ void xos_set_vector_entry()
     val64 = (uint64)&exce_vectors;
     asm("msr vbar_el1, %[v]": :[v]"r" (val64):);
 }
-void kernel_init (void)
+void kernel_init (uint64 dtb_phys)
 {
     clear_kbss();
   // boot_uart_init((uint32*)UART0_VIRT);
   // boot_puts("xos boot_main\n");
     xos_uart_init();
     boot_mem_init();
+    xos_dtb_set_boot_phys(dtb_phys);
     xos_set_vector_entry();
-
+    
+    if(xos_dtb_init() < 0){
+        printk(PT_ERROR,"dtb init failed\n\r");
+        return;
+    }
+    if(xos_memblock_init() < 0){
+        printk(PT_ERROR,"xos_memblock_init failed\n\r");
+        return;
+    }
+    if(xos_zone_set() < 0){
+        printk(PT_ERROR,"xos_zone_set failed\n\r");
+        return ;
+    }
     all_phys_linear_map();
     xos_zone_init();
     mem_cache_init();

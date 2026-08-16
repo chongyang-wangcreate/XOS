@@ -9,6 +9,8 @@ if [ $1 == "run" ]; then
     cd ..
     qemu-system-aarch64 -machine virt,gic-version=3 -smp 1 -cpu cortex-a57 \
     -machine type=virt -m 1024 -nographic \
+    -dtb qemu.dtb \
+    -device loader,file=qemu.dtb,addr=0x58000000,force-raw=on \
     -kernel kernel.elf
 
 elif [ "$1" == "run_debug" ]; then
