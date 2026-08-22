@@ -172,9 +172,12 @@ static void* __mem_cache_alloc(cache_block_t *cache_block)
     char *p_start;
     int tmp_alloc_size;
     int bitmap_take_size;
+    int block_count;
     int block_index = 0;
     void *alloc_addr;
-    arch_local_irq_disable();
+    unsigned long flags;
+
+    flags = arch_local_irq_save();
 
     if(list_is_empty(&cache_block->free_list)){
         if(list_is_empty(&cache_block->partial_list)){
@@ -203,6 +206,15 @@ static void* __mem_cache_alloc(cache_block_t *cache_block)
             mem_node->mem_map.btmp_bytes_len = (tmp_alloc_size - sizeof(mem_obj_t) -bitmap_take_size)/8;// 表示(1024位)
             mem_node->mem_map.bit_start = (uint8*)(mem_node->start_addr + (sizeof(mem_obj_t)));
             mem_node->free_count = bitmap_take_size*8;
+            block_count = (tmp_alloc_size - sizeof(mem_obj_t)) /
+                          cache_block->obj_block_size;
+            bitmap_take_size = (block_count + 7) / 8;
+            mem_node->mem_map.btmp_bytes_len = bitmap_take_size;
+            mem_node->mem_map.bit_start = (uint8*)(p_start + sizeof(mem_obj_t));
+            mem_node->start_addr = (char*)ALIGN_UP(((uint64_t)(mem_node->mem_map.bit_start + bitmap_take_size)), 8);
+            block_count = (p_start + tmp_alloc_size - mem_node->start_addr) /
+                          cache_block->obj_block_size;
+            mem_node->free_count = block_count;
             printk(PT_DEBUG,"%s:%d,mem_node->mem_map.btmp_bytes_len=%d\n\r",__FUNCTION__,__LINE__,mem_node->mem_map.btmp_bytes_len);
             printk(PT_DEBUG,"%s:%d,bitmap_take_size=%d,cache_block->obj_block_size=%d\n\r",__FUNCTION__,__LINE__,bitmap_take_size,cache_block->obj_block_size);
             bitmap_init(&mem_node->mem_map);
@@ -211,6 +223,10 @@ static void* __mem_cache_alloc(cache_block_t *cache_block)
                 再修改bitmap
             */
             block_index = find_free_bit((bitmap_t *)&mem_node->mem_map);
+            if(block_index < 0){
+                alloc_addr = NULL;
+                goto out;
+            }
             
             alloc_addr = mem_node->start_addr+ block_index *cache_block->obj_block_size;
             set_bit((uint8_t*)mem_node->mem_map.bit_start, block_index);
@@ -254,7 +270,8 @@ static void* __mem_cache_alloc(cache_block_t *cache_block)
         mem_node->free_count--;
 
     }
-    arch_local_irq_save();
+out:
+    arch_local_irq_restore(flags);
     return alloc_addr;
 }
 
@@ -276,9 +293,13 @@ int get_base2_index(int num)
 
 int get_size_index(int size)
 {
-    int index = 0;
-    index = get_base2_index(size >> DEFAULT_ORDER);
-    return index+1;
+    int index;
+    for(index = 0; index < (int)(sizeof(mem_size_set) / sizeof(xos_cache_t)); index++){
+        if(size <= mem_size_set[index].cache_bsize){
+            return index;
+        }
+    }
+    return (int)(sizeof(mem_size_set) / sizeof(xos_cache_t)) - 1;
 }
 
 void *mem_cache_alloc(int size)
@@ -287,8 +308,13 @@ void *mem_cache_alloc(int size)
     cache_block_t *local_cache_block;
 
     if(size > mem_size_set[6].cache_bsize){
+        int order = 0;
+        int pages = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 
-        mem_ptr = xos_get_free_page(0, 0);
+        while((1 << order) < pages){
+            order++;
+        }
+        mem_ptr = xos_get_free_page(0, order);
         printk(PT_DEBUG,"%s:%d,size=%d,mem_ptr=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)mem_ptr);
 
         return mem_ptr;
@@ -350,5 +376,3 @@ void xos_cache_init()
 {
 //    cache_val.cache_obj_buf[0].size = 32;
 }
-
-

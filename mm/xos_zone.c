@@ -53,6 +53,7 @@
 #include "memblock.h"
 
 #define NORMAL_PAGE_SIZE (1 << 12)
+#define BUDDY_ALIGN  (1 <(PAGE_SHIFT + MAX_ORDER -1))
 extern uint8_t _kernel_page_array_start[];
 extern uint8_t _kernel_page_array_end[];
 extern uint8_t _user_page_array_start[];
@@ -386,7 +387,7 @@ static int xos_set_zone_layouts(void)
     if(memblock == NULL || !memblock->vaild || memblock->usable.size == 0){
         return -1;
     }
-    usable_start = ALIGN_UP(memblock->usable.base,PAGE_SIZE);
+    usable_start = ALIGN_UP(memblock->usable.base,BUDDY_ALIGN);
     usable_end = ALIGN_DOWN(memblock->usable.base + memblock->usable.size,PAGE_SIZE);
     if(usable_end <= usable_start){
         return -1;
@@ -430,7 +431,7 @@ static int xos_set_zone_layouts(void)
             zone_layouts[i].end = start ?(start - 1):0;
         }
     }
-    g_zone_linear_map_start = zone_layouts[ZONE_KERNEL].size;
+    g_zone_linear_map_start = zone_layouts[ZONE_KERNEL].start;
     
     for(i = ZONE_MAX -1 ;i >= 0; i--){
         if(zone_layouts[i].size != 0){
