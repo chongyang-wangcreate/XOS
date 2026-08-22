@@ -8,6 +8,7 @@
 #include "platform.h"
 #include "xos_bus.h"
 #include "uart.h"
+#include "device_tree.h"
 
 static struct xos_bus_desc platform_bus;
 dlist_t early_platform_driver_list;
@@ -51,6 +52,47 @@ static const char *get_platform_driver_name(struct platform_driver *pdrv)
     return pdrv->driver.driver_name;
 }
 
+static int platform_of_match(struct platform_device *pdev,struct platform_driver *pdrv)
+{
+    const struct of_device_id *match;
+    if(pdev == NULL || pdrv == NULL || pdev->of_node == NULL || 
+       pdrv->driver.of_match_table == NULL){
+       return -1;
+    }
+    for(match = pdrv->driver.of_match_table;match->compatible[0] != '\0'; match++){
+        if(xos_dtb_node_is_compatible(pdev->of_node,match->compatible)){
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static void platform_device_populate_resources(struct platform_device *pdev,const char *compatible)
+{
+    xos_dtb_node_t *node;
+    uint32 irq;
+    if(pdev == NULL || compatible == NULL){
+        return ;
+    }
+    node = xos_dtb_find_by_compatible(compatible);
+    if(node == NULL){
+        return ;
+    }
+    pdev->of_node = node;
+    if(pdev->resource != NULL && pdev->num_resources > 0 && node->nr_regs > 0){
+        pdev->resource[0].start = node->regs[0].start;
+        pdev->resource[0].end   = node->regs[0].start + node->regs[0].size - 1;
+        pdev->resource[0].type  = RESOURCE_MEM;
+    }
+    if(xos_dtb_get_irq(node,0,&irq) == 0){
+        pdev->irq = irq;
+        if(pdev->resource != NULL && pdev->num_resources > 1){
+            pdev->resource[1].start = irq;
+            pdev->resource[1].end   = irq;
+            pdev->resource[1].type  = RESOURCE_IRQ;
+        }
+    }
+}
 int platform_device_register(struct platform_device *pdev)
 {
     if(!pdev || !pdev->name){
@@ -96,6 +138,7 @@ static void platform_register_devices_list(void)
     if(platform_device_registered){
         return;
     }
+    platform_device_populate_resources(&uart0_device,"arm,pl011");
     for(i = 0; i < ARRAY_SIZE(platform_driver_list);i++){
         platform_device_register(platform_driver_list[i]);
     }
@@ -127,6 +170,9 @@ int platform_match(struct device_desc *dev, struct driver_desc *drv)
     /*
         暂时先使用名称匹配
     */
+   if(platform_of_match(pdev,pdrv) == 0){
+      return 0;
+   }
     return strcmp(pdev->name,drv_name) == 0 ? 0:-1;
 }
 

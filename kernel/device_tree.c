@@ -23,15 +23,19 @@ static void parse_root_prop(xos_dtb_desc_t *info,const char *name,const uint32 *
 static void parse_chosen_prop(xos_dtb_desc_t *info,const char *name,const uint32 *data,uint32 len);
 static void parse_memory_reg(xos_dtb_desc_t *info,const uint32 *data,uint32 len);
 static int str_eq(const char *a,const char *b);
-
+static void copy_fdt_string(char *dst,uint32 dst_len,const uint32 *data,uint32 len);
+static void copy_fdt_bytes(char *dst,uint32 dst_len,const uint32 *data,uint32 len,uint32 *out_len);
+static uint32 get_node_interrupt_cells(uint32 phandle,uint32 fallback);
 static void parse_node_prop(xos_dtb_node_t *node,const char *name,
                             const uint32 *data, uint32 len,
                             uint32 parent_addr_cells,uint32 parent_size_cells);
 
 static void parse_node_interrupts(xos_dtb_node_t *node,
                                 const uint32 *data ,uint32 len,
-                                uint32 interrupt_cells);                            
+                                uint32 interrupt_cells);  
 
+static void parse_node_interrupts_extended(xos_dtb_node_t *node,
+                                const uint32 *data ,uint32 len);  
 enum{
     NODE_OTHER = 0,
     NODE_ROOT,
@@ -76,11 +80,12 @@ static void init_parse_ctx(xos_dtb_ctx_t *ctx)
     memset(ctx,0,sizeof(*ctx));
     ctx->level = -1;
     ctx->node_type = NODE_OTHER;
-    memset(ctx->node_stack,0,sizeof(ctx->node_stack));
     for(i = 0;i < XOS_DTB_MAX_DEPTH;i++){
+        ctx->node_stack[i] = -1;
         ctx->addr_cells_stack[i] = FDT_DEFAULT_ADDR_CELLS;
         ctx->size_cells_stack[i] = FDT_DEFAULT_SIZE_CELLS;
         ctx->irq_cells_stack[i] =  FDT_DEFAULT_IRQ_CELLS;
+        ctx->irq_parent_stack[i] = 0;
     }
 }
 
@@ -167,30 +172,57 @@ int xos_parse_dtb(void)
     g_dtb_info.valid = 1;
     return 0;
 }
-static int compatible_is_match(const char *list,const char *compatible)
+static int compatible_is_match(const char *list,uint32 list_len,const char *compatible)
 {
     uint32 offset = 0;
     uint32 i;
-    while(list[offset] != '\0'){
+    if(list == NULL || compatible == NULL){
+        return 0;
+    }
+
+    while(offset < list_len && list[offset] != '\0'){
         i = 0;
-        while(list[offset + i] != '\0' &&
+        while((offset + i) < list_len &&
+             list[offset + i] != '\0' &&
              list[offset + i] != ';'&&
              compatible[i] != '\0'&&
              list[offset + i] == compatible[i]){
                 i++;
              }
-        if((list[offset + i] == '\0' || list[offset + i] == ';') && compatible[i] == '\0'){
+        if((offset + i) < list_len && (list[offset + i] == '\0') && compatible[i] == '\0'){
             return 1;
         }
-        while(list[offset] != '\0' && list[offset] != ';'){
+        while(offset < list_len && list[offset] != '\0'){
             offset++;
         }
-        if(list[offset] == ';'){
-            offset++;
-        }
+        offset++;
+
     }
     return 0;
 }
+
+xos_dtb_node_t *xos_dtb_find_node_byte_phandle(uint32 phandle)
+{
+    int i;
+    if(phandle == 0){
+        return NULL;
+    }
+    for(i = 0; i< g_dtb_node_count ;i++){
+        if(g_dtb_nodes[i].phandle == phandle){
+            return &g_dtb_nodes[i];
+        }
+    }
+    return NULL;
+}
+
+int xos_dtb_node_is_compatible(const xos_dtb_node_t *node, const char *compatible)
+{
+    if(node == NULL || compatible == NULL){
+        return 0;
+    }
+    return compatible_is_match(node->compatible,node->compatible_len,compatible);
+}
+
 xos_dtb_node_t *xos_dtb_find_compatible(const char *compatible)
 {
     int i;
@@ -198,12 +230,22 @@ xos_dtb_node_t *xos_dtb_find_compatible(const char *compatible)
         return NULL;
     }
     for(i = 0; i < g_dtb_node_count ;i++){
-        if(compatible_is_match(g_dtb_nodes[i].compatible,compatible)){
+        if(xos_dtb_node_is_compatible(&g_dtb_nodes[i],compatible)){
             return &g_dtb_nodes[i];
         }
     }
     return 0;
 }
+
+int xos_dtb_get_irq(const xos_dtb_node_t *node, uint32 index ,uint32 *irq)
+{
+    if(node == NULL || irq == NULL || index >= node->nr_irqs){
+        return -1;
+    }
+    *irq = node->irqs[index].irq;
+    return 0;
+}
+
 static uint64 bounded_len(const char *s ,const char *limit)
 {
     const char *p_cur = s;
@@ -232,7 +274,7 @@ static int handle_begin_node(xos_dtb_ctx_t *ctx)
     memcpy(node_name,name,copy_len);
     node_name[copy_len] = '\0';
     printk(PT_ERROR,"node_name=%s:%d\n\r",node_name,__LINE__);
-    ctx->cur = (const uint32*)(char*)ctx->cur + align4(name_len + 1); //next
+    ctx->cur = (const uint32*)(const char*)ctx->cur + align4(name_len + 1); //next
     ctx->level++;
     if(ctx->level >= XOS_DTB_MAX_DEPTH){
         return -1;
@@ -289,7 +331,7 @@ static int handle_prop(xos_dtb_ctx_t *ctx)
     }
     parse_common_prop(ctx,prop_name,data,len);
     parse_current_node_prop(ctx,prop_name,data,len);
-    ctx->cur = (uint32*)(ctx->cur + align4(len));
+    ctx->cur = (const uint32*)((const char*)ctx->cur + align4(len));
     return 0;
 }
 
@@ -300,6 +342,9 @@ static int parse_common_prop(xos_dtb_ctx_t *ctx,const char *prop_name,
         parse_root_prop(&g_dtb_info,prop_name,data,len);
         ctx->addr_cells_stack[0] = g_dtb_info.address_cells;
         ctx->size_cells_stack[0] = g_dtb_info.size_cells;
+        if(str_eq(prop_name,"interrupt-parent") && len >= sizeof(uint32)){
+            ctx->irq_parent_stack[0] = fdt32_to_cpu(data[0]);
+        }
         return 0;
     }
     if(ctx->level == 1){
@@ -333,14 +378,14 @@ static void parse_root_prop(xos_dtb_desc_t *info,const char *name,const uint32 *
     }else if (str_eq(name,"#size-cells")){
         info->size_cells = fdt32_to_cpu(data[0]);
     }else if(str_eq(name,"model")){
-        strncpy(info->model,(const char*)data,sizeof(info->model));
+        copy_fdt_string(info->model,sizeof(info->model),data,len);
     }
 }
 
 static void parse_chosen_prop(xos_dtb_desc_t *info,const char *name,const uint32 *data,uint32 len)
 {
     if(!strcmp(name,"bootargs")){
-        strncpy(info->bootrags,(const char*)data,sizeof(info->bootrags));
+        copy_fdt_string(info->bootrags,sizeof(info->bootrags),data,len);
     }
 }
 
@@ -355,7 +400,6 @@ static void parse_memory_reg(xos_dtb_desc_t *info,const uint32 *data,uint32 len)
         info->mem_start = fdt32_to_cpu(data[0]);
         data += 1;
     }
-    printk(PT_ERROR,"%s=%d\n\r",__FUNCTION__,__LINE__);
     if(size_cells == 2){
         info->mem_size = fdt64_to_cpu(data);
     }else{
@@ -378,13 +422,17 @@ static int parse_current_node_prop(xos_dtb_ctx_t *ctx ,const char *prop_name,
     node = &g_dtb_nodes[ctx->node_stack[ctx->level]];
     parent_addr_cells = ctx->addr_cells_stack[ctx->level - 1];
     parent_size_cells = ctx->size_cells_stack[ctx->level - 1];
-    parent_irq_cells  = ctx->irq_cells_stack[ctx->level - 1];
+    parent_irq_cells  = get_node_interrupt_cells(node->interrupt_parent,
+                        ctx->irq_cells_stack[ctx->level - 1]);
     parse_node_prop(node,prop_name,data,len,parent_addr_cells,parent_size_cells);
     ctx->addr_cells_stack[ctx->level] = node->address_cells;
     ctx->size_cells_stack[ctx->level] = node->size_cells;
-    ctx->irq_cells_stack[ctx->level] = node->interrupts_cells;
+    ctx->irq_cells_stack[ctx->level]  = node->interrupts_cells;
+    ctx->irq_parent_stack[ctx->level] = node->interrupt_parent;
     if(str_eq(prop_name,"interrupts")){
         parse_node_interrupts(node,data,len,parent_irq_cells);
+    }else if(str_eq(prop_name,"interrupts-extended")){
+        parse_node_interrupts_extended(node,data,len);
     }
     return 0;
 }          
@@ -398,6 +446,51 @@ static int str_eq(const char *a,const char *b)
     return *a == *b;
 }
 
+static void copy_fdt_string(char *dst,uint32 dst_len,const uint32 *data,uint32 len)
+{
+    uint32 copy_len;
+    if(dst == NULL || dst_len == 0){
+        return ;
+    }
+    memset(dst ,0 ,dst_len);
+    if(data == NULL || len == 0){
+        return ;
+    }
+    copy_len = len < (dst_len - 1) ? len:(dst_len -1);
+    memcpy(dst,data,copy_len);
+    dst[dst_len -1] = '\0';
+}
+
+static void copy_fdt_bytes(char *dst,uint32 dst_len,const uint32 *data,uint32 len,uint32 *out_len)
+{
+    uint32 copy_len;
+    if(out_len != 0){
+        *out_len = 0;
+    }
+    if(dst == NULL || dst_len == 0){
+        return ;
+    }
+    memset(dst,0,dst_len);
+    if(data == NULL || len == 0){
+        return ;
+    }
+    copy_len = len < dst_len ? len:dst_len;
+    memcpy(dst,data,copy_len);
+    if(out_len != 0){
+        *out_len = copy_len;
+    }
+}
+
+
+static uint32 get_node_interrupt_cells(uint32 phandle,uint32 fallback)
+{
+    xos_dtb_node_t *parent;
+    parent = xos_dtb_find_node_byte_phandle(phandle);
+    if(parent != NULL && parent->interrupts_cells != 0){
+        return parent->interrupts_cells;
+    }
+    return fallback;
+}
 /*static int str_starts_value(const char *s,const char *prefix)
 {
     while(*prefix){
@@ -482,7 +575,7 @@ static void parse_node_interrupts(xos_dtb_node_t *node,
         return;
     }
     if(saved_cells > XOS_DTB_IRQ_CELLS){
-        saved_cells = XOS_DTB_MAX_IRQS;
+        saved_cells = XOS_DTB_IRQ_CELLS;
     }
     while(total_cells >= raw_cells && node->nr_irqs < XOS_DTB_MAX_IRQS){
         xos_dtb_irq_t *irq = &node->irqs[node->nr_irqs];
@@ -498,6 +591,39 @@ static void parse_node_interrupts(xos_dtb_node_t *node,
     }
 }
 
+static void parse_node_interrupts_extended(xos_dtb_node_t *node,
+                                        const uint32 *data,uint32 len)
+{
+    uint32 total_cells = len / sizeof(uint32);
+    uint32 index = 0;
+    if(node == NULL){
+        return;
+    }
+    while(total_cells > 1 && node->nr_irqs < XOS_DTB_MAX_IRQS){
+        uint32 phandle = fdt32_to_cpu(data[index]);
+        uint32 raw_cells = get_node_interrupt_cells(phandle,FDT_DEFAULT_IRQ_CELLS);
+        uint32 saved_cells = raw_cells;
+        uint32 i;
+        xos_dtb_irq_t *irq;
+
+        index++;
+        total_cells--;
+        if(saved_cells > XOS_DTB_IRQ_CELLS){
+            saved_cells = XOS_DTB_IRQ_CELLS;
+        }
+        irq = &node->irqs[node->nr_irqs];
+        memset(irq,0,sizeof(*irq));
+        irq->nr_cells = saved_cells;
+        for(i = 0;i < saved_cells ;i++){
+            irq->cells[i] = fdt32_to_cpu(data[index + i]);
+        }
+        irq->irq = get_irq(data + index,raw_cells);
+        index += raw_cells;
+        total_cells -= raw_cells;
+        node->nr_irqs++;
+    }
+
+}
 static void make_node_path(char *dst ,int dst_len,
                                    const char *parent,const char *name)
 {
@@ -532,9 +658,9 @@ static void parse_node_prop(xos_dtb_node_t *node,const char *name,
         return;
     }
     if(str_eq(name,"compatible")){
-        strncpy(node->compatible,(const char*)data,sizeof(node->compatible));
+        copy_fdt_bytes(node->compatible,sizeof(node->compatible),data,len,&node->compatible_len);
     }else if(str_eq(name,"device_type")){
-        strncpy(node->device_type,(const char*)data,sizeof(node->device_type));
+        copy_fdt_string(node->device_type,sizeof(node->device_type),(const uint32*)data,len);
     }else if(str_eq(name,"status")){
         if(str_eq((const char*)data,"disabled")){
             node->enabled = 0;
@@ -548,8 +674,12 @@ static void parse_node_prop(xos_dtb_node_t *node,const char *name,
         node->interrupts_cells = fdt32_to_cpu(data[0]);
     }else if(str_eq(name,"reg")){
         parse_node_reg(node,data,len,parent_addr_cells,parent_size_cells);
-    }else if(str_eq(name,"interrupts")){
-        parse_node_interrupts(node,data,len,node->interrupts_cells);
+    }else if((str_eq(name,"phandle") || str_eq(name,"phandle")) && len >= sizeof(uint32)){
+        node->phandle = fdt32_to_cpu(data[0]);
+    }else if(str_eq(name,"interrupt-parent") && len >= sizeof(uint32)){
+        node->interrupt_parent = fdt32_to_cpu(data[0]);
+    }else if(str_eq(name,"interrupt-controller")){
+        node->interrupt_controller = 1;
     }
 }                            
 
@@ -560,23 +690,25 @@ static int add_dtb_node(xos_dtb_ctx_t *ctx,const char *node_name)
     ctx->addr_cells_stack[ctx->level] = ctx->addr_cells_stack[parent];
     ctx->size_cells_stack[ctx->level] = ctx->size_cells_stack[parent];
     ctx->irq_cells_stack[ctx->level]  = ctx->irq_cells_stack[parent];
+    ctx->irq_parent_stack[ctx->level]  = ctx->irq_parent_stack[parent];
 
    
     if(g_dtb_node_count >= XOS_DTB_MAX_NODES){
-        ctx->node_stack[ctx->level] = 1;
+        ctx->node_stack[ctx->level] = -1;
         return 0;
     }
     make_node_path(ctx->path_stack[ctx->level],sizeof(ctx->path_stack[ctx->level]),
                                    ctx->path_stack[parent],node_name);
     node = &g_dtb_nodes[g_dtb_node_count];
     memset(node,0,sizeof(*node));
-    strncpy(node->name,node_name,sizeof(node->name));
-    strncpy(node->path,(const char*)ctx->path_stack[ctx->level],sizeof(node->path));
+    strncpy(node->name,node_name,sizeof(node->name) -1);
+    strncpy(node->path,(const char*)ctx->path_stack[ctx->level],sizeof(node->path) -1);
     printk(PT_ERROR,"node->name=%d\n\r",node->name);
     printk(PT_ERROR,"node->path=%d\n\r",node->path);
     node->address_cells = ctx->addr_cells_stack[ctx->level];
     node->size_cells = ctx->size_cells_stack[ctx->level];
     node->interrupts_cells = ctx->irq_cells_stack[ctx->level];
+    node->interrupt_parent = ctx->irq_parent_stack[ctx->level];
     node->level = ctx->level;
     node->enabled = 1;
     ctx->node_stack[ctx->level] = g_dtb_node_count;
@@ -586,7 +718,6 @@ static int add_dtb_node(xos_dtb_ctx_t *ctx,const char *node_name)
 
 static void classify_level1_node(xos_dtb_ctx_t *ctx,const char *node_name)
 {
-    printk(PT_ERROR,"%s:node_name=%s:%d\n\r",__FUNCTION__,node_name,__LINE__);
     if(compare_string(node_name,"chosen")){
         ctx->node_type = NODE_CHOSEN;
     }else if(compare_string(node_name,"memory")){

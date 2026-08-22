@@ -56,10 +56,14 @@ typedef struct xos_dtb_node{
     char name[64];
     char path[128];
     char compatible[128];
+    uint32 compatible_len;
     char device_type[32];
     uint32 address_cells;
     uint32 size_cells;
     uint32 interrupts_cells;
+    uint32 phandle;
+    uint32 interrupt_parent;
+    uint32 interrupt_controller;
     xos_dbt_reg_t regs[XOS_DTB_MAX_REGS];
     uint32 nr_regs;
     xos_dtb_irq_t irqs[XOS_DTB_MAX_IRQS];
@@ -93,10 +97,11 @@ typedef struct xos_dtb_ctx{
     int   level;
     int   node_type;
     int   node_stack[XOS_DTB_MAX_DEPTH];
-    char   path_stack[XOS_DTB_MAX_DEPTH][128];
+    char  path_stack[XOS_DTB_MAX_DEPTH][128];
     int   addr_cells_stack[XOS_DTB_MAX_DEPTH];
     int   size_cells_stack[XOS_DTB_MAX_DEPTH];
     int   irq_cells_stack[XOS_DTB_MAX_DEPTH];
+    int   irq_parent_stack[XOS_DTB_MAX_DEPTH];
 
 }xos_dtb_ctx_t;
 
@@ -104,5 +109,9 @@ extern  xos_dtb_desc_t *xos_dtb_get_info();
 extern void xos_dtb_set_boot_phys(uint64 phys);
 extern int xos_dtb_init(void);
 extern int xos_parse_dtb(void);
+extern xos_dtb_node_t *xos_dtb_find_compatible(const char *compatible);
+extern xos_dtb_node_t *xos_dtb_find_phandle(uint32 phandle);
+extern int xos_dtb_node_is_compatible(const xos_dtb_node_t *node, const char *compatible);
+extern int xos_dtb_get_irq(const xos_dtb_node_t *node, uint32 index ,uint32 *irq);
 uint64 xos_dtb_detect_phys(void);
 #endif

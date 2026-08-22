@@ -1,6 +1,7 @@
 #ifndef __PLATFORM_H__
 #define __PLATFORM_H__
 
+struct xos_dtb_node;
 struct platform_device {
     const char  *name;
     int id;
@@ -9,6 +10,7 @@ struct platform_device {
     u32    num_resources;
     struct resource	*resource;
     int irq;
+    struct xos_dtb_node *of_node;
 };
 
 #define RESOURCE_MEM    1
