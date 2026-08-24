@@ -43,16 +43,19 @@ SECTIONS {
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).text)
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).text.*)
     }
+    . = ALIGN(4096);
     ktext_end = .;
     _etext = .;
 
    
     .rodata : AT(ADDR(.rodata) - 0xffffff8000000000) {
+        _srodata = .;
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).rodata)
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).rodata.*)
+        . = ALIGN(4096);
+        _erodata = .;
     }
-
-    
+    . = ALIGN(4096);
     .data : AT(ADDR(.data) - 0xffffff8000000000) {
         _sdata = .;
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).data)
@@ -60,7 +63,6 @@ SECTIONS {
         _edata = .;
     }
 
-    
     . = ALIGN(4096);
     .bss : AT(ADDR(.bss) - 0xffffff8000000000) {
         __bss_start = .;

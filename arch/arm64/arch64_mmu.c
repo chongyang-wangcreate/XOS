@@ -1,3 +1,4 @@
+
 /********************************************************
       
     development start:20240127
@@ -39,12 +40,25 @@ void build_pgd_item(uint64 *kernel_pgd,uint64 *kernel_pmd);
 void config_enable_mmu(uint64 *kernel_pgd,uint64 *user_pgd);
 extern void *boot_alloc_l1_pgd();
 extern void *boot_alloc_l2_pmd();
+extern int boot_mem_3level_maps(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot);
+
+extern char __text[];
+extern char _etext[];
+extern char _srodata[];
+extern char _erodata[];
+extern char _sdata[];
+extern char kernel_end_phys_virt[];
 
 
 uint64 *kernel_pgtbl_tmp = NULL;
 uint64 *user_pgtbl_tmp = NULL;
 uint64 *kernel_l2_pmd = NULL;
 uint64 *user_l2_pmd = NULL;
+
+#define KERNEL_TEXT_PROT   (PG_RO_EL1 | ATTR_UXN)
+#define KERNEL_RODATA_PROT (PG_RO_EL1 | ATTR_UXN | ATTR_PXN)
+#define KERNEL_DATA_PROT   (PG_RW_EL1 | ATTR_UXN | ATTR_PXN)
+
 #define MAIR(attr, mt)  ((attr) << ((mt) * 8))
   
   
@@ -325,15 +339,23 @@ void map_mem_maps(uint64 *kern_pgd)
 }
 void kernel_early_mem_map(uint64 *kern_pgd)
 {
+    uint64 text_start = (uint64)__text;
+    uint64 text_end = (uint64)_etext;
+    uint64 rodata_start = (uint64)_srodata;
+    uint64 rodata_end = (uint64)_erodata;
+    uint64 data_start = (uint64)_sdata;
+    uint64 data_end = (uint64)kernel_end_phys_virt;
+
+    boot_mem_3level_maps((pgd_t *)kern_pgd, (void *)text_start,
+                    text_end - text_start, text_start - VA_KERNEL_START, KERNEL_TEXT_PROT);
+    boot_mem_3level_maps((pgd_t *)kern_pgd, (void *)rodata_start,
+                    rodata_end - rodata_start, rodata_start - VA_KERNEL_START, KERNEL_RODATA_PROT);
+    boot_mem_3level_maps((pgd_t *)kern_pgd, (void *)data_start,
+                    data_end - data_start, data_start - VA_KERNEL_START, KERNEL_DATA_PROT);
     // 现在这个函数只在 kernel_init 中调用，用于建立线性映射
     // 但此时 MMU 已经开启，所以直接使用 xos_3level_maps
-    xos_2level_maps(kern_pgd, (uint64)VA_KERNEL_START + (uint64)MEM_PHY_START,
-                    (uint64)MEM_PHY_START, FIR_MAP_SIZE, ATTR_UXN | PT_ATTRINDX(MT_NORMAL));
     xos_2level_maps(kern_pgd, (uint64)MEM_PHY_START, (uint64)MEM_PHY_START,
                     FIR_MAP_SIZE, ATTR_UXN | PT_ATTRINDX(MT_NORMAL));
-    xos_2level_maps(kern_pgd, (uint64)VA_KERNEL_START + (uint64)PHY_KERNMAP_START,
-                    (uint64)PHY_KERNMAP_START, PHY_TMP_MAP_END - PHY_KERNMAP_START,
-                    ATTR_UXN | PT_ATTRINDX(MT_NORMAL));
     xos_2level_maps(kern_pgd, (uint64)VA_KERNEL_START + (uint64)DEVMEM_RANGE1_BASE,
                     (uint64)DEVMEM_RANGE1_BASE, 0x3000000, PT_ATTRINDX(MT_DEVICE_nGnRnE));
     xos_2level_maps(kern_pgd, (uint64)DEVMEM_RANGE1_BASE, (uint64)DEVMEM_RANGE1_BASE,
