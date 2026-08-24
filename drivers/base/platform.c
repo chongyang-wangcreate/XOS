@@ -74,7 +74,7 @@ static void platform_device_populate_resources(struct platform_device *pdev,cons
     if(pdev == NULL || compatible == NULL){
         return ;
     }
-    node = xos_dtb_find_by_compatible(compatible);
+    node = xos_get_node_by_compatible(compatible);
     if(node == NULL){
         return ;
     }

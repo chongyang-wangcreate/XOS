@@ -1,0 +1,69 @@
+/dts-v1/;
+
+/ {
+    compatible = "xos,qemu-virt-minimal", "linux,dummy-virt";
+    #address-cells = <2>;
+    #size-cells = <2>;
+    interrupt-parent = <&gic>;
+
+    chosen {
+        stdout-path = "/pl011@9000000";
+    };
+
+    psci {
+        compatible = "arm,psci-0.2", "arm,psci";
+        method = "hvc";
+        cpu_suspend = <0x84000001>;
+        cpu_off = <0x84000002>;
+        cpu_on = <0x84000003>;
+        migrate = <0x84000005>;
+    };
+
+    memory@40000000 {
+        device_type = "memory";
+        reg = <0x0 0x40000000 0x0 0x40000000>;
+    };
+
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        cpu@0 {
+            device_type = "cpu";
+            compatible = "arm,cortex-a57";
+            reg = <0>;
+        };
+    };
+
+    apb_pclk: apb-pclk {
+        compatible = "fixed-clock";
+        #clock-cells = <0>;
+        clock-frequency = <24000000>;
+        clock-output-names = "clk24mhz";
+    };
+
+    gic: intc@8000000 {
+        compatible = "arm,gic-v3";
+        reg = <0x0 0x08000000 0x0 0x00010000
+               0x0 0x080a0000 0x0 0x00f60000>;
+        #address-cells = <2>;
+        #size-cells = <2>;
+        #redistributor-regions = <1>;
+        interrupt-controller;
+        #interrupt-cells = <3>;
+    };
+
+    timer {
+        compatible = "arm,armv7-timer";
+        always-on;
+        interrupts = <1 13 4>, <1 14 4>, <1 11 4>, <1 10 4>;
+    };
+
+    pl011@9000000 {
+        compatible = "arm,pl011", "arm,primecell";
+        reg = <0x0 0x09000000 0x0 0x1000>;
+        interrupts = <0 1 4>;
+        clocks = <&apb_pclk>, <&apb_pclk>;
+        clock-names = "uartclk", "apb_pclk";
+    };
+};
