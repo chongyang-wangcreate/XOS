@@ -161,7 +161,7 @@ p_entry_virt:
     mov x1, #PAGESIZE
     mul x0, x0, x1
     ldr x2, =main_stack_top
-    add x2, x2, x0
+    sub x2, x2, x0
     mov sp, x2
     mov x0, x20
     bl boot_main
