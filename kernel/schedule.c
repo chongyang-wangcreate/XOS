@@ -48,6 +48,8 @@ int nesting = 0;
     自己的第一版程序设计，代码编写不会复杂，而是越简单越好，
     操作系统的工作开发量非常大，当前就是先实现功能，系统可以跑
     不会耗费经历在复杂的算法上
+
+    2026.8.28 22:04: Add scheduling classes, and first implement the basic framework
 */
 
 extern dlist_t task_global_list;
@@ -143,10 +145,7 @@ static struct task_struct *rt_pick_next_task(cpu_desc_t *rq)
 
 static void rt_task_tick(cpu_desc_t *rq, struct task_struct *curr)
 {
-    if(rq == NULL){
-        return;
-    }
-    sched_queue_rr_tick(rq->rt_runqueue, curr);
+
 }
 
 static void normal_enqueue_task(cpu_desc_t *rq, struct task_struct *task)
@@ -175,6 +174,29 @@ static void normal_task_tick(cpu_desc_t *rq, struct task_struct *curr)
     sched_queue_rr_tick(rq->runqueue, curr);
 }
 
+static void idle_enqueue_task(cpu_desc_t *rq, struct task_struct *task)
+{
+
+}
+
+static void idle_dequeue_task(cpu_desc_t *rq, struct task_struct *task)
+{
+
+}
+
+static struct task_struct *idle_pick_next_task(cpu_desc_t *rq)
+{
+    if(rq == NULL){
+        return NULL;
+    }
+    return rq->idle_task;
+}
+
+static void idle_task_tick(cpu_desc_t *rq, struct task_struct *curr)
+{
+
+}
+
 static const sched_class_ops_t rt_sched_ops = {
     .enqueue_task = rt_enqueue_task,
     .dequeue_task = rt_dequeue_task,
@@ -192,7 +214,7 @@ static const sched_class_ops_t normal_sched_ops = {
 const sched_class_t xos_normal_sched_class = {
     .name = "normal",
     .ops = &normal_sched_ops,
-    .next = NULL,
+    .next = &xos_idle_sched_class,
 };
 
 const sched_class_t xos_rt_sched_class = {
@@ -211,6 +233,19 @@ static const sched_class_ops_t rr_sched_ops = {
 const sched_class_t xos_rr_sched_class = {
     .name = "rr",
     .ops = &rr_sched_ops,
+    .next = NULL,
+};
+
+static const sched_class_ops_t idle_sched_ops = {
+    .enqueue_task = idle_enqueue_task,
+    .dequeue_task = idle_dequeue_task,
+    .pick_next_task = idle_pick_next_task,
+    .task_tick = idle_task_tick,
+};
+
+const sched_class_t xos_idle_sched_class = {
+    .name = "idle",
+    .ops = &idle_sched_ops,
     .next = NULL,
 };
 
@@ -250,6 +285,11 @@ static void sched_switch_mm(struct task_struct *next)
 {
     if(next != NULL && next->task_pgd != NULL){
         set_ttbr0_el1((u64)V2P(next->task_pgd));
+
+        asm volatile("dsb ish" ::: "memory");
+        asm volatile("tlbi vmalle1is" ::: "memory");
+        asm volatile("dsb ish" ::: "memory");
+        asm volatile("isb" ::: "memory");
     }
 }
 
@@ -608,3 +648,4 @@ void sched_scheme_select()
     */
 
 }
+

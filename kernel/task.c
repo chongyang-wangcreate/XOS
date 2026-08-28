@@ -1,4 +1,5 @@
-/*  
+/********************************************************
+    
     development start:2024
     All rights reserved
     author :wangchongyang
@@ -16,7 +17,7 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
-*/
+********************************************************/
 
 #include "types.h"
 #include "list.h"
@@ -100,6 +101,8 @@ void add_to_cpu_runqueue(int cpuid,struct task_struct *task)
         return;
     }
 
+    task->cpuid = cpuid;
+    task->task_cpunum = cpuid;
     class->ops->enqueue_task(rq,task);
     rq_update_preempt(task);
     return;
@@ -131,15 +134,16 @@ void del_from_cpu_runqueue(int cpuid,struct task_struct *task)
 {
     const sched_class_t *class = task_get_sched_class(task);
     cpu_desc_t *rq = task_cpu_rq(cpuid);
+    unsigned long flags;
 
     if(rq == NULL || class == NULL || class->ops == NULL || class->ops->dequeue_task == NULL || !task_prio_valid(task)){
         return;
     }
 
-    arch_local_irq_disable();
+    flags = arch_local_irq_save();
     printk(PT_RUN,"%s:%d,cur_task->prio=%d,run_cnt=%d\n\r",__func__,__LINE__,task->prio,rq->run_count[task->prio]);
     class->ops->dequeue_task(rq,task);
-    arch_local_irq_enable();
+    arch_local_irq_restore(flags);
     return;
 
     int run_cnt;
@@ -231,7 +235,7 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
     cpuid = cur_cpuid();
 //    struct task_struct *child = (struct task_struct *)alloc_page();
     
-    struct task_struct *child = (struct task_struct *)xos_get_free_page(0,1);
+    struct task_struct *child = (struct task_struct *)xos_get_free_page(0,2);
     stack = (thread_union_t *)xos_get_free_page(0,1);
     if(child == NULL || stack == NULL){
         goto alloc_stack_faild;
@@ -278,7 +282,7 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
     child->timerslice_count = child->timeslice;
 
     child->sched_policy = SCHED_RR;
-    child->sched_class = &xos_normal_sched_class;
+    task_refresh_sched_class(child);
     child->state = TSTATE_READY;
     list_init(&child->g_list);
     list_init(&child->cpu_list);
@@ -311,6 +315,62 @@ alloc_stack_faild:
 
     return 0;
 }
+
+/*int xos_idle_thread_create(unsigned long fn, unsigned long arg)
+{
+    int cpuid = cur_cpuid();
+    thread_union_t *stack;
+    struct task_struct *idle;
+    struct pt_regs *ptr;
+
+    idle = (struct task_struct *)xos_get_free_page(0,2);
+    stack = (thread_union_t *)xos_get_free_page(0,1);
+    if(idle == NULL || stack == NULL){
+        return -1;
+    }
+
+    memset(idle,0,sizeof(*idle));
+    memset(stack,0,sizeof(*stack));
+    stack->thread_val.p_task = idle;
+
+    ptr = get_task_pt_regs_new((char*)stack);
+    memset(ptr,0, sizeof(struct pt_regs));
+    memset(&idle->cpu_context, 0,sizeof(struct cpu_context));
+
+    idle->kstack = stack;
+    idle->tsk_entry = (task_fun)fn;
+    idle->cpu_context.x19 = (unsigned long)xos_kernel_entry;
+    idle->cpu_context.x20 = (unsigned long)idle;
+    idle->cpu_context.x21 = (unsigned long)idle;
+    idle->cpu_context.pc = (unsigned long)ret_from_fork;
+    idle->cpu_context.sp = (unsigned long)ptr;
+    idle->default_prio = PRIO_MAX - 1;
+    idle->prio = PRIO_MAX - 1;
+    idle->timeslice = 0;
+    idle->timerslice_count = 0;
+    idle->sched_policy = SCHED_IDLE;
+    task_refresh_sched_class(idle);
+    idle->state = TSTATE_READY;
+    idle->cpuid = cpuid;
+    idle->task_cpunum = cpuid;
+
+    list_init(&idle->g_list);
+    list_init(&idle->cpu_list);
+    list_init(&idle->sem_list);
+    list_init(&idle->delay_list);
+    list_init(&idle->wait_list);
+    list_init(&idle->mutex_list);
+    init_fs_context(current_task, idle);
+    memset(&idle->files_set.fd_set,0,sizeof(idle->files_set.fd_set));
+    idle->files_set.fd_map.bit_start = (uint8_t*)idle->files_set.fd_set;
+    idle->files_set.fd_map.btmp_bytes_len = sizeof(idle->files_set.fd_set);
+    xos_spinlock_init(&idle->files_set.file_lock);
+    xos_init_timer(&idle->timer, 0, NULL, NULL);
+
+    dup_list_add_after(&idle->g_list, &task_global_list);
+    cpu_array[cpuid].idle_task = idle;
+    return 0;
+}*/
 
 struct task_struct *get_current_task(void)
 {

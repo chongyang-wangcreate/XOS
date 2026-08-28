@@ -12,10 +12,12 @@
 #define TASK_TYPE_KERNEL    0xff
 #define SCHED_RR            0x00
 #define SCHED_FIFO          0x01
+#define SCHED_IDLE          0x02
 #define SCHED_CLASS_RT      0x00
 #define SCHED_CLASS_NORMAL  0x01
 #define STACK_SIZE  8192
 #define PROCESS_MAX_FILE_NR 1024
+
 
 #define THREAD_SIZE    STACK_SIZE
 
@@ -227,8 +229,33 @@ typedef union thread_union {
 }thread_union_t;
 
 extern dlist_t pend_global_list;
+extern const sched_class_t xos_rt_sched_class;
+extern const sched_class_t xos_normal_sched_class;
+extern const sched_class_t xos_rr_sched_class;
+extern const sched_class_t xos_idle_sched_class;
+
+static inline const sched_class_t *task_sched_class_from_policy(uint32_t policy)
+{
+    switch(policy){
+    case SCHED_IDLE:
+        return &xos_idle_sched_class;
+    case SCHED_FIFO:
+        return &xos_rt_sched_class;
+    case SCHED_RR:
+    default:
+        return &xos_normal_sched_class;
+    }
+}
+
+static inline void task_refresh_sched_class(struct task_struct *task)
+{
+    if(task != NULL){
+        task->sched_class = task_sched_class_from_policy(task->sched_policy);
+    }
+}
 
 extern int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg);
+extern int xos_idle_thread_create(unsigned long fn, unsigned long arg);
 extern struct task_struct *get_current_task(void);
 
 extern void add_to_g_list(struct task_struct *task);
@@ -237,14 +264,14 @@ extern void add_to_cpu_runqueue(int cpuid,struct task_struct *task);
 extern void del_from_cpu_runqueue(int cpuid,struct task_struct *task);
 extern dlist_t task_global_list;
 extern struct task_struct * get_next_task_from_cpu(int cpuid);
-extern const sched_class_t xos_rt_sched_class;
-extern const sched_class_t xos_normal_sched_class;
-extern const sched_class_t xos_rr_sched_class;
 
 static inline const sched_class_t *task_get_sched_class(const struct task_struct *task)
 {
     if(task != NULL && task->sched_class != NULL){
         return task->sched_class;
+    }
+    if(task != NULL){
+        return task_sched_class_from_policy(task->sched_policy);
     }
     return &xos_normal_sched_class;
 }
@@ -259,3 +286,4 @@ static inline int get_load_flags()
     return load_proc_flags;
 }
 #endif
+

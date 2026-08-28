@@ -28,6 +28,7 @@
 #include "printk.h"
 #include "tick_timer.h"
 #include "cpu_desc.h"
+#include "schedule.h"
 
 
 /*
@@ -124,6 +125,7 @@ void timer_isr(void *desc)
     handle_task_timerslice(cpuid);
     handle_delay_task(cpuid);
 */
+    handle_task_timerslice(cpuid);
     xos_check_timer();
     /*
         对休眠任务进行处理
