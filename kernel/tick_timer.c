@@ -63,6 +63,34 @@ void handle_delay_task(int cpuid)
     int i;
     struct task_struct *d_cur_task;
     dlist_t *tmp_head;
+
+    if(cpuid < 0 || cpuid >= CPU_NR){
+        return;
+    }
+
+    for(i = 0; i < PRIO_MAX; i++){
+        while(list_is_empty(&cpu_array[cpuid].wait_que[i].delay_list) != 1){
+            tmp_head = cpu_array[cpuid].wait_que[i].delay_list.next;
+            if(tmp_head == NULL){
+                break;
+            }
+
+            d_cur_task = list_entry(tmp_head, struct task_struct, delay_list);
+            if(d_cur_task->delay_ticks > 0){
+                d_cur_task->delay_ticks--;
+            }
+
+            if(d_cur_task->delay_ticks > 0){
+                break;
+            }
+
+            list_del(&d_cur_task->delay_list);
+            d_cur_task->state = TSTATE_READY;
+            add_to_cpu_runqueue(cpuid, d_cur_task);
+        }
+    }
+    return;
+
     for(i = 0 ; i < PRIO_MAX;i++){
         /*
             队列是否非空，如果非空当前优先级delay队列有休眠任务
@@ -98,13 +126,12 @@ void handle_delay_task(int cpuid)
                     导致等待链表一直处于非空状态
                 */
                 list_del(&d_cur_task->delay_list);
-                list_add_front(&d_cur_task->cpu_list, &cpu_array[cur_cpuid()].runqueue[d_cur_task->prio].run_list);
+                add_to_cpu_runqueue(cur_cpuid(), d_cur_task);
                 /*
                     2024.04.5 AM:7:45 任务休眠之后无法再被调度原因:所在优先级的bitmap 没有被置位
                     find_prio_bitmap 找不到对应优先级
                 */
-                cpu_array[cur_cpuid()].run_count[d_cur_task->prio]++;/*2024.405 am:9:23*/
-                set_bit((uint8_t*)(cpu_array[cpuid].run_bitmap.bit_start), d_cur_task->prio);
+                
                 
             }
         }
@@ -223,6 +250,20 @@ void xos_check_timer()
     dlist_t *tmp_list;
     xos_spinlock(&cpu_array[cur_cpuid()].lock);
     dlist_t *l_timer_list_head = &cpu_array[cur_cpuid()].timer_list_head;
+
+    while(list_is_empty(l_timer_list_head) != 1){
+        tmp_list = l_timer_list_head->next;
+        tmp = list_entry(tmp_list, xos_timer_t, t_list);
+        if(tmp->time_out > kernel_ticks){
+            break;
+        }
+
+        list_del(&tmp->t_list);
+        xos_timer_out_dispatch(tmp);
+    }
+    xos_unspinlock(&cpu_array[cur_cpuid()].lock);
+    return;
+
     list_for_each(tmp_list,l_timer_list_head){
         tmp = list_entry(tmp_list,xos_timer_t,t_list);
         if(tmp->time_out > kernel_ticks){

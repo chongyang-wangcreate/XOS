@@ -64,21 +64,28 @@ char prio_table[128] = {
 void cpu_desc_init()
 {
     int num = CPU_NR;
-    int prio_num = 0;
+    int prio_num;
     int i = 0;
-    memset(&cpu_array[i],0,sizeof(cpu_array[i]));
+    memset(cpu_array,0,sizeof(cpu_array));
     for(; i < num;i++){
         
-        for(;prio_num < PRIO_MAX;prio_num++){
+        for(prio_num = 0;prio_num < PRIO_MAX;prio_num++){
             list_init(&cpu_array[i].runqueue[prio_num].run_list);
+            list_init(&cpu_array[i].rt_runqueue[prio_num].run_list);
+            list_init(&cpu_array[i].normal_runqueue[prio_num].run_list);
             list_init(&cpu_array[i].wait_que[prio_num].delay_list);
             list_init(&cpu_array[i].wait_que[prio_num].event_list);
             list_init(&cpu_array[i].wait_que[prio_num].wait_list);
-            list_init(&cpu_array[i].timer_list_head);
-            xos_spinlock_init(&cpu_array[i].lock);
             cpu_array[i].run_count[prio_num] = 0;
-            cpu_array[i].bitmap_runque_start = 0;
+            cpu_array[i].rt_run_count[prio_num] = 0;
+            cpu_array[i].normal_run_count[prio_num] = 0;
         }
+        list_init(&cpu_array[i].timer_list_head);
+        xos_spinlock_init(&cpu_array[i].lock);
+        cpu_array[i].bitmap_runque_start = 0;
+        cpu_array[i].bitmap_rt_runque_start = 0;
+        cpu_array[i].bitmap_normal_runque_start = 0;
+        cpu_array[i].bitmap_waitque_start = 0;
         
         cpu_array[i].run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_runque_start);
         cpu_array[i].run_bitmap.btmp_bytes_len = 32;//32个bit
@@ -86,9 +93,16 @@ void cpu_desc_init()
         cpu_array[i].run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_waitque_start);
         cpu_array[i].run_bitmap.btmp_bytes_len = 32;//32个bit
 
+        cpu_array[i].wait_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_waitque_start);
+        cpu_array[i].wait_bitmap.btmp_bytes_len = 32;
+        cpu_array[i].run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_runque_start);
+        cpu_array[i].run_bitmap.btmp_bytes_len = 32;
+        cpu_array[i].rt_run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_rt_runque_start);
+        cpu_array[i].rt_run_bitmap.btmp_bytes_len = 32;
+        cpu_array[i].normal_run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_normal_runque_start);
+        cpu_array[i].normal_run_bitmap.btmp_bytes_len = 32;
     }
     
-
 }
 
 

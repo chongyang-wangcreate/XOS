@@ -30,7 +30,7 @@ enum
     PRIO_NIN,
     PRIO_TEN,
     PRIO_EL,
-    PRIO_MAX,
+    PRIO_MAX = 32,
 };
 /*
     定义成结构体方便以后扩展
@@ -71,15 +71,24 @@ typedef struct struct_cpu_desc{
     int bind_nr; //当前核绑定数量
     int cur_pid;
     struct task_struct *cur_task;
+    struct task_struct *idle_task;
 //    prio_bitmap bitmap;
     bitmap_t run_bitmap;
     runque_t runqueue[PRIO_MAX];
     int run_count[PRIO_MAX];
+    bitmap_t rt_run_bitmap;
+    runque_t rt_runqueue[PRIO_MAX];
+    int rt_run_count[PRIO_MAX];
+    bitmap_t normal_run_bitmap;
+    runque_t normal_runqueue[PRIO_MAX];
+    int normal_run_count[PRIO_MAX];
     bitmap_t event_bitmap;
     bitmap_t delay_bitmap;
     wait_queue_t wait_que[PRIO_MAX];
     bitmap_t wait_bitmap;
     int bitmap_runque_start;
+    int bitmap_rt_runque_start;
+    int bitmap_normal_runque_start;
     int bitmap_waitque_start;
     dlist_t timer_list_head;
     xos_spinlock_t lock;
@@ -89,7 +98,6 @@ typedef struct struct_cpu_desc{
 
 extern cpu_desc_t cpu_array[CPU_NR];
 extern void cpu_desc_init();
-
 
 
 #endif

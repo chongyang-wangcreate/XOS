@@ -66,6 +66,7 @@ static int init_proc_desc(struct task_struct* tsk,struct proc_attr *param)
     tsk->pid = alloc_pid();
 
     tsk->sched_policy = SCHED_RR;
+    tsk->sched_class  = &xos_normal_sched_class;
     tsk->state = TSTATE_READY;
     list_init(&tsk->g_list);
     list_init(&tsk->cpu_list);

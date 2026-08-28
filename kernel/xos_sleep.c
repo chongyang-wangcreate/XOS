@@ -126,10 +126,12 @@ void xos_sleep_timerout(struct timer_struct *timer, void *arg)
 
     list_del(&timer->t_list);
     l_cur_task->state = TSTATE_READY;
-
+    add_to_cpu_runqueue(cur_cpuid(),l_cur_task);
+    #if 0
     cpu_array[cur_cpuid()].run_count[l_cur_task->prio]++;/*2024.405 am:9:23*/
     set_bit((uint8_t*)(cpu_array[cur_cpuid()].run_bitmap.bit_start), l_cur_task->prio);
     list_add_front(&l_cur_task->cpu_list,&cpu_array[cur_cpuid()].runqueue[l_cur_task->prio].run_list);
+    #endif
 
     if(l_cur_task->prio  < current_task->prio){
         current_task_info_new()->need_switch_flags = 1;
@@ -142,15 +144,18 @@ void xos_sleep_ticks(u64 ticks)
 {
     int run_cnt;
     struct task_struct *l_cur = cpu_array[cur_cpuid()].cur_task;
-    list_del(&l_cur->cpu_list);
+
     l_cur->state = TSTATE_SLEEPING;
     arch_local_irq_disable();
     run_cnt = cpu_array[cur_cpuid()].run_count[l_cur->prio];
     printk(PT_RUN,"%s:%d,cur_task->prio=%d,run_cnt=%d\n\r",__func__,__LINE__,l_cur->prio,run_cnt);
+    del_from_cpu_runqueue(cur_cpuid(),l_cur);
+    /*
+    list_del(&l_cur->cpu_list);
     cpu_array[cur_cpuid()].run_count[l_cur->prio]--;
     if(cpu_array[cur_cpuid()].run_count[l_cur->prio] == 0){
         clear_bit((uint8_t*)(cpu_array[cur_cpuid()].run_bitmap.bit_start), l_cur->prio);
-    }
+    }*/
     /*
         20240405：PM:22:05
         我还以为我新的的定时器有错误，一顿失落，难受，写操作系统就是这样

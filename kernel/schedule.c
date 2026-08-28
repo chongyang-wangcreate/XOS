@@ -57,6 +57,202 @@ extern dlist_t task_global_list;
 extern struct task_struct *load_task(struct task_struct *tsk);
 extern struct task_struct *cpu_switch_to(struct task_struct *prev, struct task_struct *next);
 
+static void sched_queue_enqueue(bitmap_t *bitmap, runque_t runqueue[], int run_count[], struct task_struct *task)
+{
+    uint32_t prio = task->prio;
+
+    run_count[prio]++;
+    if(run_count[prio] <= 1){
+        set_bit((uint8_t*)(bitmap->bit_start), prio);
+    }
+    list_add_back(&task->cpu_list,&runqueue[prio].run_list);
+}
+
+static void sched_queue_dequeue(bitmap_t *bitmap, int run_count[], struct task_struct *task)
+{
+    uint32_t prio = task->prio;
+
+    if(run_count[prio] <= 0){
+        return;
+    }
+
+    list_del(&task->cpu_list);
+    run_count[prio]--;
+    if(run_count[prio] == 0){
+        clear_bit((uint8_t*)(bitmap->bit_start), prio);
+    }
+}
+
+static struct task_struct *sched_queue_pick_next(bitmap_t *bitmap, runque_t runqueue[])
+{
+    int prio_max_num;
+    dlist_t *node;
+
+    prio_max_num = find_left_set_bit(bitmap);
+    if(prio_max_num < 0 || prio_max_num >= PRIO_MAX){
+        return NULL;
+    }
+
+    node = list_get_first_node(&runqueue[prio_max_num].run_list);
+    if(node == NULL){
+        return NULL;
+    }
+
+    return list_entry(node,struct task_struct,cpu_list);
+}
+
+static void sched_queue_rr_tick(runque_t runqueue[], struct task_struct *curr)
+{
+    if(curr == NULL){
+        return;
+    }
+
+    if(curr->sched_policy != SCHED_RR){
+        return;
+    }
+
+    if(curr->timerslice_count > 0){
+        curr->timerslice_count--;
+    }
+
+    if(curr->timerslice_count == 0){
+        curr->timerslice_count = curr->timeslice;
+        list_del(&curr->cpu_list);
+        list_add_front(&curr->cpu_list, &runqueue[curr->prio].run_list);
+        current_task_info_new()->need_switch_flags = 1;
+    }
+}
+
+static void rt_enqueue_task(cpu_desc_t *rq, struct task_struct *task)
+{
+    sched_queue_enqueue(&rq->rt_run_bitmap, rq->rt_runqueue, rq->rt_run_count, task);
+}
+
+static void rt_dequeue_task(cpu_desc_t *rq, struct task_struct *task)
+{
+    sched_queue_dequeue(&rq->rt_run_bitmap, rq->rt_run_count, task);
+}
+
+static struct task_struct *rt_pick_next_task(cpu_desc_t *rq)
+{
+    if(rq == NULL){
+        return NULL;
+    }
+    return sched_queue_pick_next(&rq->rt_run_bitmap, rq->rt_runqueue);
+}
+
+static void rt_task_tick(cpu_desc_t *rq, struct task_struct *curr)
+{
+    if(rq == NULL){
+        return;
+    }
+    sched_queue_rr_tick(rq->rt_runqueue, curr);
+}
+
+static void normal_enqueue_task(cpu_desc_t *rq, struct task_struct *task)
+{
+    sched_queue_enqueue(&rq->run_bitmap, rq->runqueue, rq->run_count, task);
+}
+
+static void normal_dequeue_task(cpu_desc_t *rq, struct task_struct *task)
+{
+    sched_queue_dequeue(&rq->run_bitmap, rq->run_count, task);
+}
+
+static struct task_struct *normal_pick_next_task(cpu_desc_t *rq)
+{
+    if(rq == NULL){
+        return NULL;
+    }
+    return sched_queue_pick_next(&rq->run_bitmap, rq->runqueue);
+}
+
+static void normal_task_tick(cpu_desc_t *rq, struct task_struct *curr)
+{
+    if(rq == NULL){
+        return;
+    }
+    sched_queue_rr_tick(rq->runqueue, curr);
+}
+
+static const sched_class_ops_t rt_sched_ops = {
+    .enqueue_task = rt_enqueue_task,
+    .dequeue_task = rt_dequeue_task,
+    .pick_next_task = rt_pick_next_task,
+    .task_tick = rt_task_tick,
+};
+
+static const sched_class_ops_t normal_sched_ops = {
+    .enqueue_task = normal_enqueue_task,
+    .dequeue_task = normal_dequeue_task,
+    .pick_next_task = normal_pick_next_task,
+    .task_tick = normal_task_tick,
+};
+
+const sched_class_t xos_normal_sched_class = {
+    .name = "normal",
+    .ops = &normal_sched_ops,
+    .next = NULL,
+};
+
+const sched_class_t xos_rt_sched_class = {
+    .name = "rt",
+    .ops = &rt_sched_ops,
+    .next = &xos_normal_sched_class,
+};
+
+static const sched_class_ops_t rr_sched_ops = {
+    .enqueue_task = normal_enqueue_task,
+    .dequeue_task = normal_dequeue_task,
+    .pick_next_task = normal_pick_next_task,
+    .task_tick = normal_task_tick,
+};
+
+const sched_class_t xos_rr_sched_class = {
+    .name = "rr",
+    .ops = &rr_sched_ops,
+    .next = NULL,
+};
+
+static const sched_class_t *xos_sched_class_root = &xos_rt_sched_class;
+
+static cpu_desc_t *sched_cpu_rq(int cpuid)
+{
+    if(cpuid < 0 || cpuid >= CPU_NR){
+        return NULL;
+    }
+    return &cpu_array[cpuid];
+}
+
+static struct task_struct *sched_pick_next_task(cpu_desc_t *rq)
+{
+    const sched_class_t *class;
+    struct task_struct *task;
+
+    if(rq == NULL){
+        return NULL;
+    }
+
+    for(class = xos_sched_class_root; class != NULL; class = class->next){
+        if(class->ops == NULL || class->ops->pick_next_task == NULL){
+            continue;
+        }
+        task = class->ops->pick_next_task(rq);
+        if(task != NULL){
+            return task;
+        }
+    }
+
+    return NULL;
+}
+
+static void sched_switch_mm(struct task_struct *next)
+{
+    if(next != NULL && next->task_pgd != NULL){
+        set_ttbr0_el1((u64)V2P(next->task_pgd));
+    }
+}
+
 /*
     这个问题在公园里思考了两个多小时，
     当前所有核只有一个tick 中断(核心点)
@@ -74,7 +270,27 @@ extern struct task_struct *cpu_switch_to(struct task_struct *prev, struct task_s
 */
 void handle_task_timerslice(int cpuid)
 {
-    struct task_struct *cur_tcb = cpu_array[cur_cpuid()].cur_task;
+    cpu_desc_t *rq = sched_cpu_rq(cpuid);
+    struct task_struct *cur_tcb;
+    const sched_class_t *class;
+
+    if(rq == NULL){
+        return;
+    }
+
+    cur_tcb = rq->cur_task;
+    if(cur_tcb == NULL){
+        return;
+    }
+
+    class = task_get_sched_class(cur_tcb);
+    if(class != NULL && class->ops != NULL && class->ops->task_tick != NULL){
+        xos_spinlock(&rq->lock);
+        class->ops->task_tick(rq, cur_tcb);
+        xos_unspinlock(&rq->lock);
+        return;
+    }
+
     if(cur_tcb == NULL){
         return ;
     }
@@ -200,6 +416,8 @@ struct task_struct * get_next_task(dlist_t *g_task_list){
 
 struct task_struct * get_next_task_from_cpu(int cpuid)
 {
+    return sched_pick_next_task(sched_cpu_rq(cpuid));
+
     /*
        
         优先级调度，查找最高优先级任务
@@ -281,16 +499,17 @@ void schedule(void)
 //  flags = arch_local_irq_save();
 //  next = get_next_task(&task_global_list);
     next = get_next_task_from_cpu(cpuid);
+    if(next == NULL){
+        arch_local_irq_enable();
+        return;
+    }
     
     printk(PT_DEBUG,"%s: next->cpu_context.x19=%lx\n\r",__FUNCTION__,next->cpu_context.x19);
     printk(PT_DEBUG,"%s: next->cpu_context.x21=%lx\n\r",__FUNCTION__,next->cpu_context.x21);
     prev = get_current_task();
     cpu_array[cpuid].cur_task = next;
     printk(PT_DEBUG,"%s: next->cpu_context.pc=%lx\n\r",__FUNCTION__,next->cpu_context.pc);
-    if(next->task_pgd != NULL)
-    {
-        set_ttbr0_el1((u64)V2P(next->task_pgd));
-    }
+    sched_switch_mm(next);
     switch_to_next(prev,next,prev);
     arch_local_irq_enable();
 }
@@ -309,16 +528,17 @@ void int_schedule(void)
     
 //  next = get_next_task(&task_global_list);
     next = get_next_task_from_cpu(cpuid);
+    if(next == NULL){
+        nesting = 0;
+        return;
+    }
     
     printk(PT_RUN,"%s: next->cpu_context.x19=%lx\n\r",__FUNCTION__,next->cpu_context.x19);
     printk(PT_RUN,"%s: next->cpu_context.x21=%lx\n\r",__FUNCTION__,next->cpu_context.x21);
     prev = get_current_task();
     cpu_array[cpuid].cur_task = next;
     printk(PT_RUN,"%s: next->cpu_context.pc=%lx\n\r",__FUNCTION__,prev->cpu_context.pc);
-    if(next->task_pgd != NULL)
-    {
-        set_ttbr0_el1((u64)V2P(next->task_pgd));
-    }
+    sched_switch_mm(next);
     if(next != prev)
     switch_to_next(prev,next,prev);
     nesting = 0;
@@ -345,6 +565,9 @@ void load_first_task()
  //   printk(PT_DEBUG,"%s:%d,LLLLLLLL\n\r",__func__,__LINE__);
     tsk = get_next_task(&task_global_list);
     tsk = get_next_task_from_cpu(cpuid);
+    if(tsk == NULL){
+        return;
+    }
  //   printk(PT_DEBUG,"%s:%d,tsk->prio=%d\n\r",__func__,__LINE__,tsk->prio);
 
     cpu_array[cpuid].cur_task = tsk;
@@ -385,6 +608,3 @@ void sched_scheme_select()
     */
 
 }
-
-
-

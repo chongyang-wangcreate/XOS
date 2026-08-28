@@ -335,6 +335,7 @@ int do_clone(int clone_flags)
         goto fail_copy_process;
     }
     child->sched_policy = SCHED_RR;
+    child->sched_class  = &xos_normal_sched_class;
     child->state = TSTATE_READY;
     list_init(&child->g_list);
     list_init(&child->cpu_list);

@@ -77,7 +77,10 @@ void sem_pend(xsem_t *sem)
             改变curr 状态。将curr 从运行链表或者ready ,链表脱链
         */
         curr->state = TSTATE_PENDING;
+        del_from_cpu_runqueue(cur_cpuid(),curr);
+        #if 0
         list_del(&curr->cpu_list);  //从对应cpu    runqueue 中删除
+        #endif
 
         xos_unspinlock(&sem->lock);
         schedule();
@@ -113,7 +116,11 @@ void sem_post(xsem_t *sem)
                 wakeup
             */
             curr->state = TSTATE_READY;  //被调度时任务状态由READY 转为RUNNING
+            add_to_cpu_runqueue(cur_cpuid(),curr);
+            #if 0
+            暂时先不删除，重构代码验证通过后再删除
             list_add_back(&curr->cpu_list, &cpu_array[cur_cpuid()].runqueue[curr->prio].run_list);
+            #endif
         }
 
     }

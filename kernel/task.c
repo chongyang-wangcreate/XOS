@@ -1,5 +1,4 @@
-/********************************************************
-    
+/*  
     development start:2024
     All rights reserved
     author :wangchongyang
@@ -17,7 +16,7 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
-********************************************************/
+*/
 
 #include "types.h"
 #include "list.h"
@@ -55,7 +54,25 @@ dlist_t pend_global_list;
 char task_space[3][4096] = {0};
 
 
+static cpu_desc_t *task_cpu_rq(int cpuid)
+{
+    if(cpuid < 0 || cpuid >= CPU_NR){
+        return NULL;
+    }
+    return &cpu_array[cpuid];
+}
 
+static int task_prio_valid(struct task_struct *task)
+{
+    return task != NULL && task->prio < PRIO_MAX;
+}
+
+static void rq_update_preempt(struct task_struct *task)
+{
+    if(get_load_flags() != 0 && task->prio < current_task->prio){
+        current_task_info_new()->need_switch_flags = 1;
+    }
+}
 
 void init_fs_context(struct task_struct *parent, struct task_struct *child)
 {
@@ -76,6 +93,17 @@ void add_to_g_list(struct task_struct *task)
 
 void add_to_cpu_runqueue(int cpuid,struct task_struct *task)
 {
+    const sched_class_t *class = task_get_sched_class(task);
+    cpu_desc_t *rq = task_cpu_rq(cpuid);
+
+    if(rq == NULL || class == NULL || class->ops == NULL || class->ops->enqueue_task == NULL || !task_prio_valid(task)){
+        return;
+    }
+
+    class->ops->enqueue_task(rq,task);
+    rq_update_preempt(task);
+    return;
+
     runque_t *cpu_runque;
     cpu_runque = &cpu_array[cpuid].runqueue[task->prio];
     if(task->prio < PRIO_MAX){
@@ -101,6 +129,19 @@ void add_to_cpu_runqueue(int cpuid,struct task_struct *task)
 
 void del_from_cpu_runqueue(int cpuid,struct task_struct *task)
 {
+    const sched_class_t *class = task_get_sched_class(task);
+    cpu_desc_t *rq = task_cpu_rq(cpuid);
+
+    if(rq == NULL || class == NULL || class->ops == NULL || class->ops->dequeue_task == NULL || !task_prio_valid(task)){
+        return;
+    }
+
+    arch_local_irq_disable();
+    printk(PT_RUN,"%s:%d,cur_task->prio=%d,run_cnt=%d\n\r",__func__,__LINE__,task->prio,rq->run_count[task->prio]);
+    class->ops->dequeue_task(rq,task);
+    arch_local_irq_enable();
+    return;
+
     int run_cnt;
     arch_local_irq_disable();
     list_del(&task->cpu_list);
@@ -237,6 +278,7 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
     child->timerslice_count = child->timeslice;
 
     child->sched_policy = SCHED_RR;
+    child->sched_class = &xos_normal_sched_class;
     child->state = TSTATE_READY;
     list_init(&child->g_list);
     list_init(&child->cpu_list);
@@ -310,6 +352,3 @@ int do_sys_gettgid()
 {
     return current_task->tgid;
 }
-
-
-

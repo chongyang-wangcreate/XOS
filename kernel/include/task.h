@@ -12,6 +12,8 @@
 #define TASK_TYPE_KERNEL    0xff
 #define SCHED_RR            0x00
 #define SCHED_FIFO          0x01
+#define SCHED_CLASS_RT      0x00
+#define SCHED_CLASS_NORMAL  0x01
 #define STACK_SIZE  8192
 #define PROCESS_MAX_FILE_NR 1024
 
@@ -20,6 +22,22 @@
 
 typedef unsigned long pid_t;
 typedef void (*task_fun)(void*);
+
+struct task_struct;
+struct struct_cpu_desc;
+
+typedef struct sched_class_ops {
+    void (*enqueue_task)(struct struct_cpu_desc *rq, struct task_struct *task);
+    void (*dequeue_task)(struct struct_cpu_desc *rq, struct task_struct *task);
+    struct task_struct *(*pick_next_task)(struct struct_cpu_desc *rq);
+    void (*task_tick)(struct struct_cpu_desc *rq, struct task_struct *curr);
+} sched_class_ops_t;
+
+typedef struct sched_class {
+    const char *name;
+    const sched_class_ops_t *ops;
+    const struct sched_class *next;
+} sched_class_t;
 
 
 
@@ -160,6 +178,7 @@ struct task_struct
     char user_path[128]; //bin 路径
     x_task_fs fs_context;
     files_set_t files_set;
+    const sched_class_t *sched_class;
 
 };
 
@@ -218,6 +237,17 @@ extern void add_to_cpu_runqueue(int cpuid,struct task_struct *task);
 extern void del_from_cpu_runqueue(int cpuid,struct task_struct *task);
 extern dlist_t task_global_list;
 extern struct task_struct * get_next_task_from_cpu(int cpuid);
+extern const sched_class_t xos_rt_sched_class;
+extern const sched_class_t xos_normal_sched_class;
+extern const sched_class_t xos_rr_sched_class;
+
+static inline const sched_class_t *task_get_sched_class(const struct task_struct *task)
+{
+    if(task != NULL && task->sched_class != NULL){
+        return task->sched_class;
+    }
+    return &xos_normal_sched_class;
+}
 
 
 #define current_task get_current_task()

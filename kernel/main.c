@@ -189,7 +189,7 @@ void kernel_init (uint64 dtb_phys)
     mem_cache_init();
    // test_buddy();
 
-     xos_uart_puts("Hello from kernel_init 5\n");
+    xos_uart_puts("Hello from kernel_init 5\n");
     local_irq_disable();
     xos_irq_init();
     xos_uart_irq_init();
