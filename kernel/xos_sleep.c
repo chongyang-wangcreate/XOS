@@ -49,6 +49,7 @@ int xos_sleep(uint32_t ticks)
     struct task_struct *l_cur_task = cpu_array[cur_cpuid()].cur_task;
     struct task_struct *cur_tmp;
     if(ticks == 0){
+        arch_local_irq_enable();
         return 0; //后续设置成规范的返回值
     }
     l_cur_task->delay_ticks = ticks; // 休眠ticks 数
@@ -123,9 +124,21 @@ void xos_sleep_timerout(struct timer_struct *timer, void *arg)
         20240606 PM:23:12 一边熬药一边写代码，此情此景，多线程并行处理
     */
     struct task_struct *l_cur_task = (struct task_struct*)arg;
+    int cpuid;
 
-    list_del(&timer->t_list);
+    if(l_cur_task == NULL){
+        return;
+    }
+
+    if(l_cur_task->state != TSTATE_SLEEPING){
+        return ;
+    }
+
     l_cur_task->state = TSTATE_READY;
+    cpuid = l_cur_task->cpuid;
+    if(cpuid < 0 || cpuid >= CPU_NR){
+        cpuid = cur_cpuid();
+    }
     add_to_cpu_runqueue(cur_cpuid(),l_cur_task);
     #if 0
     cpu_array[cur_cpuid()].run_count[l_cur_task->prio]++;/*2024.405 am:9:23*/
@@ -143,19 +156,18 @@ void xos_sleep_timerout(struct timer_struct *timer, void *arg)
 void xos_sleep_ticks(u64 ticks)
 {
     int run_cnt;
+    int cpuid;
     struct task_struct *l_cur = cpu_array[cur_cpuid()].cur_task;
-
-    l_cur->state = TSTATE_SLEEPING;
+    if(ticks == 0){
+        return;
+    }
+    cpuid = cur_cpuid();
     arch_local_irq_disable();
+    l_cur->state = TSTATE_SLEEPING;
     run_cnt = cpu_array[cur_cpuid()].run_count[l_cur->prio];
     printk(PT_RUN,"%s:%d,cur_task->prio=%d,run_cnt=%d\n\r",__func__,__LINE__,l_cur->prio,run_cnt);
-    del_from_cpu_runqueue(cur_cpuid(),l_cur);
-    /*
-    list_del(&l_cur->cpu_list);
-    cpu_array[cur_cpuid()].run_count[l_cur->prio]--;
-    if(cpu_array[cur_cpuid()].run_count[l_cur->prio] == 0){
-        clear_bit((uint8_t*)(cpu_array[cur_cpuid()].run_bitmap.bit_start), l_cur->prio);
-    }*/
+    del_from_cpu_runqueue(cpuid,l_cur);
+
     /*
         20240405：PM:22:05
         我还以为我新的的定时器有错误，一顿失落，难受，写操作系统就是这样
