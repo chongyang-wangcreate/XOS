@@ -1,0 +1,16 @@
+# 编译生成镜像、反汇编、符号文件
+*.asm
+*.elf
+*.sym
+
+# DTB、DTS编译输出
+*.dtb
+*.out.dts
+
+# 编译输出目录
+output/
+
+# QEMU运行临时文件
+qemu*.log
+qemu*.dtb
+qemu*.dts
