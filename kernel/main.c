@@ -184,6 +184,7 @@ void kernel_init (uint64 dtb_phys)
         printk(PT_ERROR,"xos_zone_set failed\n\r");
         return ;
     }
+    xos_kernel_map();
     all_phys_linear_map();
     xos_zone_init();
     mem_cache_init();

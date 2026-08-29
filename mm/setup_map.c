@@ -68,10 +68,10 @@ extern void map_mem_maps(uint64 *kern_pgd);
 void xos_map_blocks(void *pgd,const xos_map_desc_t *maps,int nr_cnt);
 
 
-extern void *l1_kernel_pgt;  
-extern void *l2_kernel_pgt0;
-extern void *l2_kernel_pgt1;
-extern void *l1_user_pgt;
+extern uint64 l1_kernel_pgt[];  
+extern uint64 l2_kernel_pgt0[];
+extern uint64 l2_kernel_pgt1[];
+extern uint64 l1_user_pgt[];
 
 int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot);
 /*
@@ -323,14 +323,49 @@ extern uint8_t _dma_page_array_start[];
 extern uint8_t _dma_page_array_end[];
 extern char _load_addr_start_virt[];
 extern char kernel_end_phys_virt[];
+
+extern char __text[];
+extern char _etext[];
+extern char _srodata[];
+extern char _erodata[];
+extern char _sdata[];
+
+#define KERNEL_TEXT_PROT      (PG_RO_EL1 | ATTR_UXN)
+#define KERNEL_RODATA_PROT    (PG_RO_EL1 | ATTR_UXN | ATTR_PXN)
+#define KERNEL_DATA_PROT      (PG_RW_EL1 | ATTR_UXN | ATTR_PXN)
+
+static void xos_kernel_section_map(char *start, char *end, uint64 prot)
+{
+    uint64 vstart = ALIGN_DOWN((uint64)start, PAGE_SIZE);
+    uint64 vend = ALIGN_UP((uint64)end, PAGE_SIZE);
+
+    if (vend <= vstart) {
+        return;
+    }
+
+    boot_mem_3level_maps(l1_kernel_pgt, (void *)vstart, vend - vstart,
+                         vstart - VA_KERNEL_START, prot);
+}
+
+void xos_kernel_map(void)
+{
+    xos_kernel_section_map(__text, _etext, KERNEL_TEXT_PROT);
+    xos_kernel_section_map(_srodata, _erodata, KERNEL_RODATA_PROT);
+    xos_kernel_section_map(_sdata, kernel_end_phys_virt, KERNEL_DATA_PROT);
+    flush_tlb();
+    printk(PT_ERROR, "Kernel section map finish\n");
+}
+
 void all_phys_linear_map(void)
 {
+    int zone_cnt;
+    const xos_zone_layout_t *layouts;
  //    map_mem_maps(l1_kernel_pgt);  
  //    return ;
     /* 映射内核代码和数据区 */
-    uint64_t p_start = (uint64_t)_load_addr_start_virt - VA_KERNEL_START;
+    /*uint64_t p_start = (uint64_t)_load_addr_start_virt - VA_KERNEL_START;
     uint64_t p_end = (uint64_t)kernel_end_phys_virt - VA_KERNEL_START;
-    xos_linear_maps(p_start, p_end);
+    xos_linear_maps(p_start, p_end);*/
     
     /* 映射zone元数据区域 */
     uint64_t meta_start = (uint64_t)_zone_metadata_start - VA_KERNEL_START;
@@ -342,12 +377,18 @@ void all_phys_linear_map(void)
     /*xos_linear_maps(ZONE_KERNEL_START, ZONE_KERNEL_END);
     xos_linear_maps(ZONE_USER_START, ZONE_USER_END);
     xos_linear_maps(ZONE_DMA_START, ZONE_DMA_END);*/
-
-    if(xos_zone_linear_map_start() != 0 &&
+    /*user zone 不再映射，而是设置成动态映射*/
+    /*if(xos_zone_linear_map_start() != 0 &&
     xos_zone_linear_map_end() >= xos_zone_linear_map_start()){
         xos_linear_maps(xos_zone_linear_map_start(), xos_zone_linear_map_end());
+    }*/
+    layouts = xos_get_zone_layouts(&zone_cnt);
+    if (layouts != NULL && zone_cnt > ZONE_KERNEL && layouts[ZONE_KERNEL].size != 0) {
+        xos_linear_maps(layouts[ZONE_KERNEL].start, layouts[ZONE_KERNEL].end);
     }
-    
+    if (layouts != NULL && zone_cnt > ZONE_DMA && layouts[ZONE_DMA].size != 0) {
+        xos_linear_maps(layouts[ZONE_DMA].start, layouts[ZONE_DMA].end);
+    }
     printk(PT_WARRING,"Linear mapping complete: 0x%lx - 0x%lx\n", 
           ZONE_KERNEL_START, ZONE_DMA_END);
    

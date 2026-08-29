@@ -74,7 +74,7 @@ extern int find_pte_phy(pgd_t *pgdir, void *va,uint64 *phy_addr);
 #define ALIGN_UP(x, align)    (uint64)(((uint64)(x) +  (align - 1)) & ~(align - 1))
 
 extern void xos_2level_maps(uint64 *pgd,uint64 virt, uint64 phy, uint len, uint64 mm_attr);
-extern void all_phys_linear_map();
-
+extern void all_phys_linear_map(void);
+extern void xos_kernel_map(void);
 
 #endif

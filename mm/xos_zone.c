@@ -394,7 +394,7 @@ static int xos_set_zone_layouts(void)
     }
     remaining_size = usable_end - usable_start;
     start = usable_start;
-    default_size[ZONE_KERNEL] = 128UL * 1024UL *1024UL;
+    default_size[ZONE_KERNEL] = 256UL * 1024UL *1024UL;
     default_size[ZONE_USER]   = 128UL * 1024UL *1024UL;
     default_size[ZONE_DMA]    = 128UL * 1024UL *1024UL;
     total_desired_size = default_size[ZONE_KERNEL] + default_size[ZONE_USER] + default_size[ZONE_DMA];
