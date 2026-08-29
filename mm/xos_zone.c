@@ -89,19 +89,19 @@ static xos_zone_layout_t  zone_layouts[ZONE_MAX] = {
 
     },
     {
-        .zone_id = ZONE_USER,
-        .name = "user",
-        .size = ZONE_USER_SIZE,
-        .page_array = (xos_page_t*)_user_page_array_start,
-        .page_array_end = (xos_page_t*)_dma_page_array_end,
-
-    },
-    {
         .zone_id = ZONE_DMA,
         .name = "dma",
         .size = ZONE_DMA_SIZE,
         .page_array = (xos_page_t*)_dma_page_array_start,
         .page_array_end = (xos_page_t*)_kernel_page_array_end,
+
+    },
+    {
+        .zone_id = ZONE_USER,
+        .name = "user",
+        .size = ZONE_USER_SIZE,
+        .page_array = (xos_page_t*)_user_page_array_start,
+        .page_array_end = (xos_page_t*)_dma_page_array_end,
 
     },
 };
@@ -436,6 +436,7 @@ static int xos_set_zone_layouts(void)
     for(i = ZONE_MAX -1 ;i >= 0; i--){
         if(zone_layouts[i].size != 0){
             g_zone_linear_map_end = zone_layouts[i].end;
+            break;
         }
     }
     g_zone_layout_set_done = 1;

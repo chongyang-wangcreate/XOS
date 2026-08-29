@@ -149,6 +149,6 @@ extern uint8_t kernel_end[];
 #define LINEAR_V2P(x)    ((void*)LINEAR_V2P_UL(x))
 
 #define XOS_FIXMAP_SLOTS   32
-#define XOS_FIXMAP_TOP     0xFFFFFFFFFFE000000UL
-#define XOS_FIXMAP_ADDR(idx) 
+#define XOS_FIXMAP_TOP     0xFFFFFFFFFFE00000UL
+#define XOS_FIXMAP_ADDR(idx)  (XOS_FIXMAP_TOP - (((uint64)(idx) + 1)*0x1000UL))
 #endif

@@ -13,8 +13,8 @@
 
 enum {
     ZONE_KERNEL,
-    ZONE_USER,
     ZONE_DMA,
+    ZONE_USER,
     ZONE_MAX
 };
 

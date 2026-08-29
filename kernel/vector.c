@@ -20,8 +20,10 @@
 
 
 #include "types.h"
+#include "string.h"
 #include "list.h"
 #include "setup_map.h"
+#include "mmu.h"
 #include "mem_layout.h"
 #include "phy_mem.h"
 #include "xos_page.h"
@@ -78,9 +80,95 @@ static int is_user_data_abort(uint64_t esr)
 {
     return (get_exce_from_esr(esr) == 0x24);
 }
+
+static int is_user_inst_abort(uint64_t esr)
+{
+    return (get_exce_from_esr(esr) == 0x20);
+}
+
 static int is_kernel_data_abort(uint64_t esr)
 {
     return (get_exce_from_esr(esr) == 0x25);
+}
+
+static int is_permission_fault(uint64_t esr)
+{
+    uint64_t fault_status = esr & 0x3f;
+
+    return fault_status >= 0x0c && fault_status <= 0x0f;
+}
+
+static int is_write_fault(uint64_t esr)
+{
+    return (esr & (1UL << 6)) != 0;
+}
+
+static struct vm_area_struct *find_vma(struct task_struct *tsk,
+                                       uint64_t vaddr)
+{
+    struct vm_area_struct *vma;
+
+    if (tsk == NULL || tsk->mm == NULL) {
+        return NULL;
+    }
+
+    for (vma = tsk->mm->mmap; vma != NULL; vma = vma->vm_next) {
+        if (vaddr >= vma->vm_start && vaddr < vma->vm_end) {
+            return vma;
+        }
+    }
+
+    return NULL;
+}
+
+static void flush_user_tlb(void)
+{
+    asm volatile("dsb ishst" ::: "memory");
+    asm volatile("tlbi vmalle1is" ::: "memory");
+    asm volatile("dsb ish" ::: "memory");
+    asm volatile("isb" ::: "memory");
+}
+
+static uint64_t user_vma_page_prot(struct vm_area_struct *vma)
+{
+    uint64_t prot;
+
+    if ((vma->vm_flags & VM_WRITE) != 0) {
+        prot = PG_RW_EL1_EL0;
+    } else {
+        prot = PG_RO_EL1_EL0;
+    }
+
+    if ((vma->vm_flags & VM_EXEC) == 0) {
+        prot |= ATTR_UXN;
+    }
+
+    return prot | ATTR_PXN;
+}
+
+static int user_vma_map_page_fault(struct task_struct *tsk,
+                                   struct vm_area_struct *vma,
+                                   uint64_t page_vaddr)
+{
+    uint64_t phy_addr;
+
+    if (vma->pma_saddr == (uint64_t)-1) {
+        phy_addr = xos_alloc_user_page_pa();
+        if (phy_addr == 0) {
+            printk(PT_ERROR, "%s: no user page for va=%lx\n\r",
+                   __FUNCTION__, page_vaddr);
+            return -ENOMEM;
+        }
+    } else {
+        phy_addr = vma->pma_saddr + (page_vaddr - vma->vm_start);
+    }
+
+    map_page(tsk->task_pgd, (void *)page_vaddr, PAGE_SIZE,
+             phy_addr, user_vma_page_prot(vma));
+    flush_user_tlb();
+    printk(PT_RUN, "%s: va=%lx phyaddr=%lx flags=%x\n\r",
+           __FUNCTION__, page_vaddr, phy_addr, vma->vm_flags);
+    return 0;
 }
 
 
@@ -89,25 +177,87 @@ static inline uint64 get_syscall_no(struct pt_regs *regs)
     /*read AAPCS*/
     return regs->regs[9];
 }
-
-void page_fault(struct task_struct *tsk,uint64_t vaddr)
+/*
+    2026.08.29. add cow handle
+    kmap 处理过于简陋存在一些问题，后续完善
+*/
+void page_fault(struct task_struct *tsk, uint64_t vaddr, uint64_t esr)
 {
+    struct vm_area_struct *vma;
+    pte_t *pte;
     if(tsk == NULL){
         printk(PT_ERROR,"%s:%d,vaddr=%lx\n\r",__FUNCTION__,__LINE__,vaddr);
         return;
     }
+
     uint64_t page_align_vaddr = ALIGN_DOWN(vaddr,PAGE_SIZE);
-    uint64_t phy_addr = (uint64_t)xos_get_user_phy(0, 0);
-    if(phy_addr == 0){
-        printk(PT_ERROR,"%s:%d,vaddr=%lx\n\r",__FUNCTION__,__LINE__,vaddr);
-        return ;
+    vma = find_vma(tsk, page_align_vaddr);
+
+    if (is_permission_fault(esr) && is_write_fault(esr) && vma != NULL &&
+        (vma->vm_flags & VM_WRITE) && !(vma->vm_flags & VM_SHARED)) {
+        uint64_t old_phy_addr;
+        uint64_t new_phy_addr;
+        void *new_kva;
+
+        if (find_pte_phy(tsk->task_pgd, (void *)page_align_vaddr,
+                         &old_phy_addr) == 0) {
+            pte = copy_create_3level_page(tsk->task_pgd,
+                                          (void *)page_align_vaddr);
+            if (pte == NULL || !(*pte & PTE_COW)) {
+                printk(PT_ERROR, "%s: write permission fault is not COW va=%lx pte=%lx esr=%lx\n\r",
+                       __FUNCTION__, page_align_vaddr,
+                       pte == NULL ? 0 : (unsigned long)*pte, esr);
+                return;
+            }
+
+            new_phy_addr = xos_alloc_user_page_pa();
+            if (new_phy_addr == 0) {
+                printk(PT_ERROR, "%s: no page for COW va=%lx\n\r",
+                       __FUNCTION__, page_align_vaddr);
+                return;
+            }
+
+            new_kva = xos_kmap_page_pa(new_phy_addr);
+            if (new_kva == NULL) {
+                printk(PT_ERROR, "%s: COW page not linearly mapped pa=%lx\n\r",
+                       __FUNCTION__, new_phy_addr);
+                xos_page_put(new_phy_addr);
+                return;
+            }
+            memcpy(new_kva, (void *)page_align_vaddr, PAGE_SIZE);
+            xos_kunmap_page(new_kva);
+            *pte = new_phy_addr | ACCESS_FLAG | SH_IN_SH | PG_RW_EL1_EL0 |
+                   NON_SECURE_PA | PT_ATTRINDX(MT_NORMAL) | PT_ENTRY_PAGE |
+                   PT_ENTRY_VALID;
+            xos_page_put(old_phy_addr);
+            flush_user_tlb();
+            return;
+        }
+
+        printk(PT_ERROR, "%s: COW fault without mapped pte va=%lx esr=%lx\n\r",
+               __FUNCTION__, page_align_vaddr, esr);
+        return;
     }
-    printk(PT_ERROR,"%s:%d,vaddr=%lx\n\r",__FUNCTION__,__LINE__,vaddr);
-    user_page_mapping(tsk->task_pgd, (void *)page_align_vaddr,
-    phy_addr,
-    PAGE_SIZE,
-    0);
-    printk(PT_RUN,"%s:%d,vaddr=%lx phyaddr=%x\n\r",__FUNCTION__,__LINE__,page_align_vaddr,phy_addr);
+
+    if (is_permission_fault(esr)) {
+        printk(PT_ERROR, "%s: unhandled permission fault va=%lx esr=%lx\n\r",
+               __FUNCTION__, page_align_vaddr, esr);
+        return;
+    }
+
+    if (vma == NULL) {
+        printk(PT_ERROR, "%s: page fault outside vma va=%lx esr=%lx\n\r",
+               __FUNCTION__, page_align_vaddr, esr);
+        return;
+    }
+
+    if (is_user_inst_abort(esr) && (vma->vm_flags & VM_EXEC) == 0) {
+        printk(PT_ERROR, "%s: instruction fault on non-exec vma va=%lx esr=%lx flags=%x\n\r",
+               __FUNCTION__, page_align_vaddr, esr, vma->vm_flags);
+        return;
+    }
+
+    user_vma_map_page_fault(tsk, vma, page_align_vaddr);
 }
 
 void abnormal_scene_display(int err_type,uint64_t esr,uint64_t exce_address){
@@ -141,10 +291,10 @@ void do_el0_sync(struct pt_regs *regs,uint64_t addr, uint64_t esr)
 
         ret = sys_call_entry(syscallno,regs);
         regs->regs[0] = ret;
-    }else if(is_user_data_abort(esr)){
+    }else if(is_user_data_abort(esr) || is_user_inst_abort(esr)){
         show_pt_regs(regs);
         printk(PT_ERROR,"%s:%d vaddr=%lx, esr=%lx\n\r",__FUNCTION__,__LINE__,addr,esr);
-        page_fault(cur_task,addr);
+        page_fault(cur_task,addr,esr);
 
     }else if(is_kernel_data_abort(esr)){
         show_pt_regs(regs);
@@ -202,4 +352,3 @@ void do_el0_sync(struct pt_regs *regs,uint64_t addr, uint64_t esr)
         参考中断返回用户空间。
     */
 }
-

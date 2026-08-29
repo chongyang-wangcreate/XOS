@@ -40,36 +40,7 @@ typedef struct page_cache{
     xos_spinlock_t pg_lock;
 
 }xos_pg_cache_t;
-#if 0
-struct zone {
-	/* zone watermarks, access with *_wmark_pages(zone) macros */
-	unsigned long _watermark[NR_WMARK];//页分配器使用的水线
-	unsigned long watermark_boost;
-	unsigned long nr_reserved_highatomic;
-	long lowmem_reserve[MAX_NR_ZONES];//当前区域预留多少页不能给高位的区域类型 
-	struct pglist_data	*zone_pgdat;
-	struct per_cpu_pageset __percpu *pageset;
-	/* zone_start_pfn == zone_start_paddr >> PAGE_SHIFT */
-	unsigned long		zone_start_pfn;//当前区域的起始
-	 /* 伙伴分配器管理的物理页数量
-	 * managed_pages is present pages managed by the buddy system, which
-	 * is calculated as (reserved_pages includes pages allocated by the
-	 * bootmem allocator):
-	 *	managed_pages = present_pages - reserved_pages;
-	 */
-	 atomic_long_t		managed_pages;
-	unsigned long		spanned_pages;
-	unsigned long		present_pages;
-	const char		*name;
-	int initialized; 
-	/* free areas of different sizes */
-	struct free_area	free_area[MAX_ORDER];//不同长度的空间区域 
-	/* zone flags, see below */
-	unsigned long		flags; 
-	/* Primarily protects free_area */
-	spinlock_t		lock;
-}
-#endif
+
 extern xos_pg_cache_t page_cache_block;
 
 /*
@@ -108,6 +79,11 @@ extern void *xos_get_kern_page();
 extern void * xos_get_free_page(int mode,int order);
 extern  void *xos_get_phy(int mode,int order);
 extern  void *xos_get_user_phy(int mode,int order);
+extern uint64 xos_alloc_user_page_pa(void);
+extern void *xos_kmap_page_pa(uint64 pa);
+extern void xos_kunmap_page(void *kva);
+extern int xos_page_get(uint64 pa);
+extern int xos_page_put(uint64 pa);
 extern  void* alloc_page (void);
 extern int  get_order (uint32 v);
 void*           kmalloc (int order);
@@ -117,3 +93,5 @@ extern void xos_free_page(void *addr);
 
 //#define xos_free_page(addr) xos_free_pages(addr,order)
 #endif
+
+
