@@ -168,7 +168,8 @@ FS_OBJ = \
     fs/sysfs/sys_read.o\
     fs/sysfs/sys_write.o\
     fs/sysfs/sys_getcwd.o\
-    fs/sysfs/sys_chdir.o
+    fs/sysfs/sys_chdir.o \
+    fs/sysfs/sys_exec.o
 
 FS_TMP_OBJ = \
     fs/xos_file.o
@@ -186,6 +187,7 @@ USER_OBJ = \
     usr/libc/dup.o\
     usr/libc/mkdir.o\
     usr/libc/fork.o\
+    usr/libc/exec.o\
     usr/libc/readdir.o\
     usr/ls.o\
     usr/usr_printf.o

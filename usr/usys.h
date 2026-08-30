@@ -18,6 +18,7 @@ enum{
     NR_LSEEK,
     NR_CHMOD,
     NR_GETPID,
+    NR_EXECVE,
     NR_MAX
 
 };

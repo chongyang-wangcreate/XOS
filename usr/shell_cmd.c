@@ -13,6 +13,8 @@
 #include "ustring.h"
 #include "usys.h"
 #include "printf.h"
+#include "fork.h"
+#include "stdlib.h"
 
 #define HASH_TABLE_SIZE 128
 
@@ -258,10 +260,20 @@ int xos_shell_kmd_register(int keynum,ksh_cmd_fun cmd_fun,char *cmd_format,char 
 }
 
 
-int test_shell_cmd(int argc, char*argv[]){
+int fork_shell_cmd(int argc, char*argv[]){
     /*
         check parampter
     */
+    unsigned int ret;
+    int pid = 0;
+    ret = fork();
+    if(ret == 0){
+        pid = SYS_CALL_DEF0(NR_GETPID);
+        printf("child pid=%d\n",pid);
+    }else{
+         pid = SYS_CALL_DEF0(NR_GETPID);
+         printf("parent pid=%d\n",pid);
+    }
     return 0;
 }
 
@@ -313,7 +325,10 @@ int ls_cmd(int argc, char*argv[]){
 int load_exec_cmd(int argc, char*argv[]){
 
     printf("%s:%d\n\r",__FUNCTION__,__LINE__);
-    return 0;
+    if(argc < 2){
+        return -1;
+    }
+    return execve(argv[1],(const char**)&argv[1],NULL);
 }
 
 int backspace_key_handle(sh_desc_t *shell)
@@ -479,7 +494,7 @@ void xos_shell_cmd_init()
     shell_cmd_head_init();
     shell_ctrl_key_init();
     spcial_key_cmd_init();
-    xos_shell_cmd_register("test",test_shell_cmd,"test","help","test cmd");
+    xos_shell_cmd_register("fork",fork_shell_cmd,"test","help","fork cmd");
     
     xos_shell_cmd_register("cat", cat_cmd, 
     "cat [dirname|filename]", 
