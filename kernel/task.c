@@ -79,7 +79,7 @@ void init_fs_context(struct task_struct *parent, struct task_struct *child)
 {
     if(!parent){
         xos_spinlock_init(&child->fs_context.lock);
-        //printk(PT_DEBUG,"%s:%d FFFFFFF\n\r",__FUNCTION__,__LINE__);
+        printk(PT_ERROR,"%s:%d FFFFFFF\n\r",__FUNCTION__,__LINE__);
     }else{
         memcpy(&child->fs_context,&parent->fs_context,sizeof(parent->fs_context));
         xos_spinlock_init(&child->fs_context.lock);
@@ -236,6 +236,9 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
 //    struct task_struct *child = (struct task_struct *)alloc_page();
     
     struct task_struct *child = (struct task_struct *)xos_get_free_page(0,2);
+    if(child == NULL){
+        printk(PT_ERROR,"%s:%d, child alloc failed\n\r",__func__,__LINE__);
+    }
     stack = (thread_union_t *)xos_get_free_page(0,1);
     if(child == NULL || stack == NULL){
         goto alloc_stack_faild;
@@ -272,7 +275,6 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
    // printk(PT_RUN,"%s:%d,fn=%llx\n\r",__FUNCTION__,__LINE__,fn);
    // printk(PT_RUN,"%s:%d,x21=%llx\n\r",__FUNCTION__,__LINE__,child->cpu_context.x21);
    
-   // printk(PT_RUN,"%s:%d,sp_ptr=%llx\n\r",__FUNCTION__,__LINE__,(unsigned long)ptr);
     child->sched_flags = 0;
     child->cpu_context.pc = (unsigned long)ret_from_fork;
     child->cpu_context.sp = (unsigned long)ptr;  //栈顶

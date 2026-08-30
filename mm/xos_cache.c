@@ -174,7 +174,7 @@ static void* __mem_cache_alloc(cache_block_t *cache_block)
     int bitmap_take_size;
     int block_count;
     int block_index = 0;
-    void *alloc_addr;
+    void *alloc_addr = NULL;
     unsigned long flags;
 
     flags = arch_local_irq_save();
@@ -186,6 +186,9 @@ static void* __mem_cache_alloc(cache_block_t *cache_block)
                 需要再向buddy 内存分配器申请，申请固定4K 页
             */
             p_start = (char*)xos_get_free_page(0, 0);
+            if(p_start == NULL){
+                goto out;
+            }
             tmp_alloc_size = (1 << PAGE_SHIFT);
             /*
                 初始化mem_node
@@ -194,6 +197,7 @@ static void* __mem_cache_alloc(cache_block_t *cache_block)
             printk(PT_DEBUG,"%s:%d,tmp_alloc_size=%d\n\r",__FUNCTION__,__LINE__,tmp_alloc_size);
             mem_node->use_count = 0;
             mem_node->block_size = cache_block->obj_block_size;
+            mem_node->cache_block = cache_block;
             /*
                 ((tmp_alloc_size - sizeof(mem_obj_t) -x_size)/cache_block->obj_block_size/8 = x_size
                 使用上述公式就能解出x_size 大小
@@ -230,12 +234,13 @@ static void* __mem_cache_alloc(cache_block_t *cache_block)
             
             alloc_addr = mem_node->start_addr+ block_index *cache_block->obj_block_size;
             set_bit((uint8_t*)mem_node->mem_map.bit_start, block_index);
-            /*
-                将当前mem_node 加入到当前cache_block->partial_list 中
-            */
-            list_add_back(&mem_node->list, &cache_block->partial_list);
             mem_node->use_count++;
             mem_node->free_count--;
+            if(mem_node->free_count == 0){
+                list_add_back(&mem_node->list, &cache_block->full_list);
+            }else{
+                list_add_back(&mem_node->list, &cache_block->partial_list);
+            }
         }else{
             /*
                 从partial_list 链表中获取节点,分配完毕之后判断本节点管理的内存块是否分配完毕
@@ -245,6 +250,10 @@ static void* __mem_cache_alloc(cache_block_t *cache_block)
             list_node = cache_block->partial_list.next;
             mem_node = list_entry(list_node, mem_obj_t, list);
             block_index = find_free_bit(&mem_node->mem_map);
+            if(block_index < 0){
+                alloc_addr = NULL;
+                goto out;
+            }
             alloc_addr = mem_node->start_addr+ block_index *cache_block->obj_block_size;
             set_bit((uint8_t*)mem_node->mem_map.bit_start, block_index);
             /*
@@ -253,7 +262,7 @@ static void* __mem_cache_alloc(cache_block_t *cache_block)
             mem_node->use_count++;
             mem_node->free_count--;
             if(mem_node->free_count == 0){
-
+                list_del(&mem_node->list);
                 list_add_back(&mem_node->list,&cache_block->full_list);
             }
         }
@@ -263,11 +272,20 @@ static void* __mem_cache_alloc(cache_block_t *cache_block)
         list_node =  cache_block->free_list.next;
         mem_node = list_entry(list_node,mem_obj_t,list);
         block_index = find_free_bit((bitmap_t *)&mem_node->mem_map);
+        if(block_index < 0){
+            alloc_addr = NULL;
+            goto out;
+        }
         alloc_addr = mem_node->start_addr+ block_index *cache_block->obj_block_size;
         set_bit((uint8_t*)mem_node->mem_map.bit_start, block_index);
-        list_add_back(&mem_node->list ,&cache_block->partial_list);
+        list_del(&mem_node->list);
         mem_node->use_count++;
         mem_node->free_count--;
+        if(mem_node->free_count == 0){
+            list_add_back(&mem_node->list, &cache_block->full_list);
+        }else{
+            list_add_back(&mem_node->list, &cache_block->partial_list);
+        }
 
     }
 out:
@@ -345,7 +363,13 @@ void mem_cache_free(void *addr)
 {
     mem_obj_t  *mem_node;
     int bindex;
+    unsigned long flags;
     unsigned long align_addr = ALIGN_DOWN(addr, PAGE_SIZE);
+    if(addr == NULL){
+        return;
+    }
+
+    flags = arch_local_irq_save();
     /*
         每个也都是4K 对齐
         获取mem_node 结构的地址
@@ -359,6 +383,16 @@ void mem_cache_free(void *addr)
     mem_node->free_count++;
     if(mem_node->use_count != 0)
     mem_node->use_count--;
+    if(mem_node->cache_block != NULL){
+        if(mem_node->use_count == 0){
+            list_del(&mem_node->list);
+            list_add_back(&mem_node->list, &mem_node->cache_block->free_list);
+        }else if(mem_node->free_count == 1){
+            list_del(&mem_node->list);
+            list_add_back(&mem_node->list, &mem_node->cache_block->partial_list);
+        }
+    }
+    arch_local_irq_restore(flags);
     
 }
 
