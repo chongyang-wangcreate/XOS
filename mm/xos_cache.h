@@ -89,12 +89,14 @@ typedef struct mem_pool{
 typedef struct mem_obj{
     struct list_head list; //链表节点与free_list  partial_list 或者full_list 相关联
     char *start_addr; //起始地址
-    int index;// index 内存块标识
+    void *free_head;
+    uint32_t magic;
+    int total_count;
     int free_count;
     int use_count;
     int block_size;
+    int page_order;
     cache_block_t *cache_block; //确定自己属于那个caceh_block;
-    bitmap_t mem_map;
     
 }mem_obj_t;
 

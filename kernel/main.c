@@ -132,7 +132,7 @@ void kernel_thread2(char *array)
 
 void start_init(char *array)
 {
-
+    printk(PT_ERROR,"%s:%d\n\r",__FUNCTION__,__LINE__);
 #ifndef CONFIG_VFS
     xos_vfs_init();
     xos_mount_fs();
@@ -146,11 +146,12 @@ void start_init(char *array)
 #ifndef CONFIG_DEV
      xos_init_deivices(); 
 #endif
-
+    printk(PT_ERROR,"%s:%d\n\r",__func__,__LINE__);
     process_create();
     while(1)
     {
         xos_sleep_ticks(10);
+        wfi();
        // printk(PT_DEBUG,"%s:%d\n\r",__func__,__LINE__);
     }
 }

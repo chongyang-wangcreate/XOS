@@ -1,4 +1,3 @@
-
 /********************************************************
     
     development start: 2023
@@ -139,7 +138,7 @@ int pmd_map(pud_t *pud_p, u64 vaddr, u64 end, u64 paddr, u64 attr)
     idx = PMD_IDX(vaddr);
     pmd += idx;
 
-    for(virt_pmd_next = vaddr;virt_pmd_next < vaddr;pmd++)
+    for(virt_pmd_next = vaddr;virt_pmd_next < end;pmd++)
     {
         
         virt_pmd_next = (virt_pmd_next + PMD_SIZE) & PMDIR_MASK; //步长2M
@@ -252,9 +251,7 @@ int xos_pages_map(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 
 int map_page(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot)
 {
     //增加以4k位步长的循环
-    xos_3level_one_pagemap(pgdir, va, pa,  prot);
-
-    return 0;
+    return xos_3level_one_pagemap(pgdir, va, pa,  prot);
 }
 
 void map_mem(pgd_t *pgdir,const xos_map_desc_t *maps,int nr_cnt)
@@ -285,9 +282,10 @@ void map_mem(pgd_t *pgdir,const xos_map_desc_t *maps,int nr_cnt)
     normal mem maps
 */
 
-void xos_linear_maps(uint64 phy_start, uint64 phy_end)
+int xos_linear_maps(uint64 phy_start, uint64 phy_end)
 {
-    uint64 map_size = phy_end - phy_start;
+    uint64 map_size = phy_end - phy_start + 1;
+    int ret;
    // pgd_t *pgdir = P2V(kernel_pgtbl_tmp);
     pgd_t *pgdir = l1_kernel_pgt;
 
@@ -297,9 +295,10 @@ void xos_linear_maps(uint64 phy_start, uint64 phy_end)
 
     uint64  prot = PG_RW_EL1_EL0;
     
-    boot_mem_3level_maps(pgdir, map_vaddr_star,map_size, phy_start,prot);
+    ret = boot_mem_3level_maps(pgdir, map_vaddr_star,map_size, phy_start,prot);
 //    xos_3level_maps(pgdir, map_vaddr_star,map_size, phy_start,prot);
     flush_tlb ();
+    return ret;
 }
 
 
@@ -317,10 +316,7 @@ void all_phys_linear_map()
 
 }*/
 extern uint8_t _zone_metadata_start[];
-extern uint8_t _kernel_page_array_start[];
-extern uint8_t _user_page_array_start[];
-extern uint8_t _dma_page_array_start[];
-extern uint8_t _dma_page_array_end[];
+extern uint8_t _zone_metadata_end[];
 extern char _load_addr_start_virt[];
 extern char kernel_end_phys_virt[];
 
@@ -359,6 +355,7 @@ void xos_kernel_map(void)
 void all_phys_linear_map(void)
 {
     int zone_cnt;
+    int i;
     const xos_zone_layout_t *layouts;
  //    map_mem_maps(l1_kernel_pgt);  
  //    return ;
@@ -369,11 +366,28 @@ void all_phys_linear_map(void)
     
     /* 映射zone元数据区域 */
     uint64_t meta_start = (uint64_t)_zone_metadata_start - VA_KERNEL_START;
-    uint64_t meta_end = (uint64_t)_dma_page_array_end - VA_KERNEL_START;
-    xos_linear_maps(meta_start, meta_end);
+    uint64_t meta_end = (uint64_t)_zone_metadata_end - VA_KERNEL_START - 1;
+    if(xos_linear_maps(meta_start, meta_end) < 0){
+        printk(PT_ERROR,"zone metadata linear map failed\n\r");
+    }
     
     /* 映射所有zone的物理内存 */
-    put_hex(ZONE_KERNEL_START);
+    layouts = xos_get_zone_layouts(&zone_cnt);
+    if (layouts != NULL && zone_cnt > ZONE_KERNEL) {
+        put_hex(layouts[ZONE_KERNEL].start);
+    }
+    if(layouts != NULL){
+        for(i = 0; i < zone_cnt; i++){
+            if(layouts[i].page_array == NULL ||
+               layouts[i].page_array_end <= layouts[i].page_array){
+                continue;
+            }
+            if(xos_linear_maps(V2P(layouts[i].page_array),
+                               V2P(layouts[i].page_array_end) - 1) < 0){
+                printk(PT_ERROR,"zone page array linear map failed\n\r");
+            }
+        }
+    }
     /*xos_linear_maps(ZONE_KERNEL_START, ZONE_KERNEL_END);
     xos_linear_maps(ZONE_USER_START, ZONE_USER_END);
     xos_linear_maps(ZONE_DMA_START, ZONE_DMA_END);*/
@@ -382,15 +396,18 @@ void all_phys_linear_map(void)
     xos_zone_linear_map_end() >= xos_zone_linear_map_start()){
         xos_linear_maps(xos_zone_linear_map_start(), xos_zone_linear_map_end());
     }*/
-    layouts = xos_get_zone_layouts(&zone_cnt);
     if (layouts != NULL && zone_cnt > ZONE_KERNEL && layouts[ZONE_KERNEL].size != 0) {
-        xos_linear_maps(layouts[ZONE_KERNEL].start, layouts[ZONE_KERNEL].end);
+        if(xos_linear_maps(layouts[ZONE_KERNEL].start, layouts[ZONE_KERNEL].end) < 0){
+            printk(PT_ERROR,"kernel zone linear map failed\n\r");
+        }
     }
     if (layouts != NULL && zone_cnt > ZONE_DMA && layouts[ZONE_DMA].size != 0) {
-        xos_linear_maps(layouts[ZONE_DMA].start, layouts[ZONE_DMA].end);
+        if(xos_linear_maps(layouts[ZONE_DMA].start, layouts[ZONE_DMA].end) < 0){
+            printk(PT_ERROR,"dma zone linear map failed\n\r");
+        }
     }
     printk(PT_WARRING,"Linear mapping complete: 0x%lx - 0x%lx\n", 
-          ZONE_KERNEL_START, ZONE_DMA_END);
+          xos_zone_linear_map_start(), xos_zone_linear_map_end());
    
 }
 
@@ -623,7 +640,10 @@ int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa,
         {
             pte_array_base = (pte_t*) P2V((*pmd) & PG_4k_ADDR_MASK);
         }else if(pt_entry_is_valid(*pmd)){
-            printk(PT_RUN,"%s:%d,pgd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pgd,
+            if(((*pmd) & PMD_MASK) == (pa & PMD_MASK)){
+                goto next_page;
+            }
+            printk(PT_RUN,"%s:%d,pmd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pmd,
             (unsigned long )start);
             return -1;
         }else{
@@ -641,6 +661,7 @@ int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa,
         */
         *pte = pa | ACCESS_FLAG | SH_IN_SH | prot | NON_SECURE_PA | PT_ATTRINDX(MT_NORMAL) | PT_ENTRY_PAGE | PT_ENTRY_VALID;
 
+next_page:
         if (start == last) {
             break;
         }

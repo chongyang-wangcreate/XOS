@@ -61,7 +61,7 @@ extern int pmd_map(pud_t *pud_p, u64 vaddr, u64 end, u64 paddr, u64 attr);
 extern int ptd_map(pmd_t *pmd_p, u64 vaddr, u64 end, u64 paddr, u64 attr);
 
 */
-extern void xos_linear_maps(uint64 phy_start, uint64 phy_end);
+extern int xos_linear_maps(uint64 phy_start, uint64 phy_end);
 extern int xos_pages_map(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot);
 extern void map_mem(pgd_t *pgdir,const xos_map_desc_t *maps,int nr_cnt);
 extern int map_page(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot);
@@ -78,3 +78,4 @@ extern void all_phys_linear_map(void);
 extern void xos_kernel_map(void);
 
 #endif
+

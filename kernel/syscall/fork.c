@@ -166,7 +166,7 @@ int copy_task_struct(struct task_struct *child,  struct task_struct *parent)
     child_mm = child->mm;
     memcpy(&child_context, &child->cpu_context, sizeof(child_context));
 
-    xos_spinlock(&parent->mm->mm_lock);
+//    xos_spinlock(&parent->mm->mm_lock);
     memcpy(child,parent,sizeof(struct task_struct));
     child->kstack = child_kstack;
     child->task_pgd = child_pgd;
@@ -185,7 +185,7 @@ int copy_task_struct(struct task_struct *child,  struct task_struct *parent)
     list_init(&child->delay_list);
     list_init(&child->wait_list);
     list_init(&child->mutex_list);
-    xos_unspinlock(&parent->mm->mm_lock);
+//    xos_unspinlock(&parent->mm->mm_lock);
     return 0;
 }
 

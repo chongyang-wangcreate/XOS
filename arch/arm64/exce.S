@@ -310,6 +310,6 @@ load_task:
 	ldp     x29, x9, [x8], #16
 	ldr     x30, [x8]
 	mov     sp, x9
-	b xos_enable_irq
+	msr    daifclr,  #2
 	ret
 

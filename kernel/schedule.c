@@ -121,7 +121,7 @@ static void sched_queue_rr_tick(runque_t runqueue[], struct task_struct *curr)
         curr->timerslice_count = curr->timeslice;
         list_del(&curr->cpu_list);
         list_add_front(&curr->cpu_list, &runqueue[curr->prio].run_list);
-        current_task_info_new()->need_switch_flags = 1;
+        curr->need_switch = 1;
     }
 }
 
@@ -608,10 +608,11 @@ void load_first_task()
     if(tsk == NULL){
         return;
     }
- //   printk(PT_DEBUG,"%s:%d,tsk->prio=%d\n\r",__func__,__LINE__,tsk->prio);
+    printk(PT_ERROR,"%s:%d,tsk->prio=%d\n\r",__func__,__LINE__,tsk->prio);
 
     cpu_array[cpuid].cur_task = tsk;
     xos_sti();
+     printk(PT_ERROR,"%s:%d,tsk->prio=%d\n\r",__func__,__LINE__,tsk->prio);
     load_task(tsk);
 }
 

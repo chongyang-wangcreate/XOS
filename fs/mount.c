@@ -429,7 +429,6 @@ inner_mount_fail:
 */
 int do_mount_at(const char *fs_name,int flags,char *mount_path,char *dev_name,void *data)
 {
-    printk(PT_DEBUG,"%s:%d,fs_name=%s\n\r",__FUNCTION__,__LINE__,fs_name);
     int ret = 0;
     int mnt_flags = 0;
     lookup_path_t look_path;
@@ -444,7 +443,7 @@ int do_mount_at(const char *fs_name,int flags,char *mount_path,char *dev_name,vo
             ret = -ENOMEM;
             return ret;
         }
-        printk(PT_RUN,"%s:%d,root_mnt=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)mnt_desc);
+        printk(PT_ERROR,"%s:%d,root_mnt=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)mnt_desc);
         /*
             get_filesystem_sb :init_file_system and return file superblock 
             
@@ -464,17 +463,20 @@ int do_mount_at(const char *fs_name,int flags,char *mount_path,char *dev_name,vo
         mnt_desc->root_dentry = xspuper->root_dentry;
 
         
-        printk(PT_RUN,"%s:%d,m_desc->mount_point.fs_name=%s\n\r",__FUNCTION__,__LINE__, mnt_desc->mount_point->file_name.path_name);
+        printk(PT_ERROR,"%s:%d,m_desc->mount_point.fs_name=%s\n\r",__FUNCTION__,__LINE__, mnt_desc->mount_point->file_name.path_name);
         
         printk(PT_RUN,"%s:%d,fs_name=%s\n\r",__FUNCTION__,__LINE__, mnt_desc->root_dentry->file_name.path_name);
         /*
             当前current_task 为空
             root mnt attach curr_task->fs_context
         */
-        set_pwd(&current_task->fs_context, mnt_desc, mnt_desc->root_dentry);
-        set_root(&current_task->fs_context, mnt_desc, mnt_desc->root_dentry);
+        if(current_task == NULL)
+        printk(PT_ERROR,"%s:%d\n\r",__FUNCTION__,__LINE__);
+        if(current_task != NULL){
+           set_pwd(&current_task->fs_context, mnt_desc, mnt_desc->root_dentry);
+           set_root(&current_task->fs_context, mnt_desc, mnt_desc->root_dentry);
+        }
         xos_unspinlock(&mnt_lock);
-        printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
         return ret;
     }else{
         /*

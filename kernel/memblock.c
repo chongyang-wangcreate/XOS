@@ -4,8 +4,7 @@
 #include "mem_layout.h"
 #include "device_tree.h"
 #include "memblock.h"
-extern uint8_t _kernel_page_array_start[];
-extern uint8_t _kernel_page_array_end[];
+
 
 #define XOS_MEMBLOCK_ALIGN 0x1000UL
 
@@ -45,7 +44,7 @@ int xos_memblock_init()
     if(mem_start < PHYS_MEM_START){
         mem_start = PHYS_MEM_START;
     }
-    if(mem_end < PHYS_MEM_END){
+    if(mem_end > PHYS_MEM_END){
         mem_start = PHYS_MEM_END;
     }
     if(mem_end < mem_start){
@@ -77,9 +76,9 @@ int xos_memblock_init()
     }
     usable_start = align_up_u64(usable_start,XOS_MEMBLOCK_ALIGN);
     usable_end   = align_down_u64(mem_end + 1,XOS_MEMBLOCK_ALIGN);;
-    if(usable_start <= usable_end){
+    if(usable_start < usable_end){
         g_memblock_info.usable.base = usable_start;
-        g_memblock_info.usable.size = usable_end - usable_start + 1;
+        g_memblock_info.usable.size = usable_end - usable_start;
     }
     g_memblock_info.vaild = 1;
     return 0;

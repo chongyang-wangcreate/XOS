@@ -20,10 +20,6 @@ KERNEL_LINEAR_START = KERNEL_START + LOAD_ADDR_START;
 /* 主栈大小（保留原有定义） */
 MAIN_STACK_SIZE = 0x10000;
 
-KERNEL_PAGE_ARRAY_SIZE = (64*1024*1024);
-USER_PAGE_ARRAY_SIZE = (256*1024*1024);
-DMA_PAGE_ARRAY_SIZE = (32*1024*1024);
-
 SECTIONS {
     /* ========== 内核虚拟地址起始 ========== */
     . = 0xffffff8040000000;
@@ -106,28 +102,6 @@ SECTIONS {
         . += 0x200000;          /* 2MB */
         PROVIDE(_zone_metadata_end = .);
 
-       
-        . = ALIGN(4096);
-        PROVIDE(_kernel_page_array_start = .);
-        PROVIDE(_kernel_page_array = .);
-        . += KERNEL_PAGE_ARRAY_SIZE;
-        PROVIDE(_kernel_page_array_end = .);
-
-        
-        . = ALIGN(4096);
-        PROVIDE(_user_page_array_start = .);
-        PROVIDE(_user_page_array = .);
-        . += USER_PAGE_ARRAY_SIZE;
-        PROVIDE(_user_page_array_end = .);
-
-        
-        . = ALIGN(4096);
-        PROVIDE(_dma_page_array_start = .);
-        PROVIDE(_dma_page_array = .);
-        . += DMA_PAGE_ARRAY_SIZE;
-        PROVIDE(_dma_page_array_end = .);
-
-        
         . = ALIGN(4096);
         PROVIDE(_page_arrays_end = .);
     }
@@ -188,6 +162,8 @@ SECTIONS {
     PROVIDE(_user_bss_saddr = user_bss_start);
     PROVIDE(_user_bss_eaddr = user_bss_end);
     PROVIDE(_user_bss_lma = LOADADDR(.user_bss));
+    PROVIDE(_user_image_end_lma = ALIGN(LOADADDR(.user_bss) + SIZEOF(.user_bss), PAGE_SIZE));
+    PROVIDE(_user_end_lma_virt = KERNEL_START + _user_image_end_lma);
     PROVIDE (_user_vma = _user_text_saddr);
     PROVIDE (_user_lma = _user_text_lma);
 

@@ -18,7 +18,7 @@
 #define true  1
 #define false 0
 #define INT_MAX		((int32_t)(~0U>>1))
-char format_buf[256];
+//char format_buf[256];
 
 
 typedef char int8_t;
@@ -1681,6 +1681,7 @@ uint32 printk(int level,const char *fmt, ...)
 //	char *p;
 	va_list args;
 	int32_t len;
+	char format_buf[256];
 //	int32_t loglevel;
 
 	va_start(args, fmt);

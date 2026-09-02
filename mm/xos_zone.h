@@ -12,8 +12,8 @@
 #define	MAX_ORDER	11
 
 enum {
-    ZONE_KERNEL,
     ZONE_DMA,
+    ZONE_KERNEL,
     ZONE_USER,
     ZONE_MAX
 };
@@ -85,3 +85,5 @@ extern uint64 xos_zone_linear_map_end(void);
 extern int xos_zone_set();
 
 #endif
+
+

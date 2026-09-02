@@ -1,27 +1,61 @@
 #ifndef __XOS_PREEMPT_H__
 #define __XOS_PREEMPT_H__
 
+#include "task.h"
 
-#define preempt_count()	(current_task_info_new()->preempt_count)
+static inline u8 *preempt_count_ptr(void)
+{
+  struct task_struct *task = current_task;
 
-#define preempt_count_add(val) do { preempt_count() += (val); } while (0)
-#define preempt_count_dec(val) do { preempt_count() -= (val); } while (0)
+  if(task == NULL){
+    return NULL;
+  }
+  return &task->preempt_count;
+}
+
+static inline int preempt_count(void)
+{
+  u8 *count = preempt_count_ptr();
+
+  if(count == NULL){
+    return 1;
+  }
+  return *count;
+}
+
+static inline void preempt_count_add(int val)
+{
+  u8 *count = preempt_count_ptr();
+
+  if(count != NULL){
+    *count += val;
+  }
+}
+
+static inline void preempt_count_dec(int val)
+{
+  u8 *count = preempt_count_ptr();
+
+  if(count != NULL && *count >= val){
+    *count -= val;
+  }
+}
 
  static inline int preempt_is_disabled(void) {
-  return (current_task_info_new()->preempt_count > 0);
+  return (preempt_count() > 0);
 }
 
 
 #define preempt_disable()\
 do  \
 {   \
-    current_task_info_new()->preempt_count++;\
+    preempt_count_add(1);\
 } while (0)
 
 #define preempt_enable()\
 do  \
 {   \
-    current_task_info_new()->preempt_count--;\
+    preempt_count_dec(1);\
 } while (0)
 
 #endif

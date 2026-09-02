@@ -83,9 +83,7 @@ int xos_vfs_init()
     fs_list_init();
 
     init_file_sys();
-
     mount_rootfs("rootfs",0,"/",NULL,NULL); /*挂载第一个文件系统*/
-   
 
     return 0;
 }
