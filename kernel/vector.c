@@ -151,6 +151,7 @@ static int user_vma_map_page_fault(struct task_struct *tsk,
                                    uint64_t page_vaddr)
 {
     uint64_t phy_addr;
+    int ret;
 
     if (vma->pma_saddr == (uint64_t)-1) {
         phy_addr = xos_alloc_user_page_pa();
@@ -163,8 +164,13 @@ static int user_vma_map_page_fault(struct task_struct *tsk,
         phy_addr = vma->pma_saddr + (page_vaddr - vma->vm_start);
     }
 
-    map_page(tsk->task_pgd, (void *)page_vaddr, PAGE_SIZE,
-             phy_addr, user_vma_page_prot(vma));
+    ret = map_page(tsk->task_pgd, (void *)page_vaddr, PAGE_SIZE,
+                   phy_addr, user_vma_page_prot(vma));
+    if(ret < 0){
+        printk(PT_ERROR, "%s: map_page failed va=%lx phyaddr=%lx ret=%d\n\r",
+               __FUNCTION__, page_vaddr, phy_addr, ret);
+        return ret;
+    }
     flush_user_tlb();
     printk(PT_RUN, "%s: va=%lx phyaddr=%lx flags=%x\n\r",
            __FUNCTION__, page_vaddr, phy_addr, vma->vm_flags);
@@ -181,13 +187,13 @@ static inline uint64 get_syscall_no(struct pt_regs *regs)
     2026.08.29. add cow handle
     kmap 处理过于简陋存在一些问题，后续完善
 */
-void page_fault(struct task_struct *tsk, uint64_t vaddr, uint64_t esr)
+int page_fault(struct task_struct *tsk, uint64_t vaddr, uint64_t esr)
 {
     struct vm_area_struct *vma;
     pte_t *pte;
     if(tsk == NULL){
         printk(PT_ERROR,"%s:%d,vaddr=%lx\n\r",__FUNCTION__,__LINE__,vaddr);
-        return;
+        return -EINVAL;
     }
 
     uint64_t page_align_vaddr = ALIGN_DOWN(vaddr,PAGE_SIZE);
@@ -207,14 +213,14 @@ void page_fault(struct task_struct *tsk, uint64_t vaddr, uint64_t esr)
                 printk(PT_ERROR, "%s: write permission fault is not COW va=%lx pte=%lx esr=%lx\n\r",
                        __FUNCTION__, page_align_vaddr,
                        pte == NULL ? 0 : (unsigned long)*pte, esr);
-                return;
+                return -EINVAL;
             }
 
             new_phy_addr = xos_alloc_user_page_pa();
             if (new_phy_addr == 0) {
                 printk(PT_ERROR, "%s: no page for COW va=%lx\n\r",
                        __FUNCTION__, page_align_vaddr);
-                return;
+                return -ENOMEM;
             }
 
             new_kva = xos_kmap_page_pa(new_phy_addr);
@@ -222,7 +228,7 @@ void page_fault(struct task_struct *tsk, uint64_t vaddr, uint64_t esr)
                 printk(PT_ERROR, "%s: COW page not linearly mapped pa=%lx\n\r",
                        __FUNCTION__, new_phy_addr);
                 xos_page_put(new_phy_addr);
-                return;
+                return -EINVAL;
             }
             memcpy(new_kva, (void *)page_align_vaddr, PAGE_SIZE);
             xos_kunmap_page(new_kva);
@@ -231,33 +237,33 @@ void page_fault(struct task_struct *tsk, uint64_t vaddr, uint64_t esr)
                    PT_ENTRY_VALID;
             xos_page_put(old_phy_addr);
             flush_user_tlb();
-            return;
+            return 0;
         }
 
         printk(PT_ERROR, "%s: COW fault without mapped pte va=%lx esr=%lx\n\r",
                __FUNCTION__, page_align_vaddr, esr);
-        return;
+        return -EINVAL;
     }
 
     if (is_permission_fault(esr)) {
         printk(PT_ERROR, "%s: unhandled permission fault va=%lx esr=%lx\n\r",
                __FUNCTION__, page_align_vaddr, esr);
-        return;
+        return -EINVAL;
     }
 
     if (vma == NULL) {
         printk(PT_ERROR, "%s: page fault outside vma va=%lx esr=%lx\n\r",
                __FUNCTION__, page_align_vaddr, esr);
-        return;
+        return -EINVAL;
     }
 
     if (is_user_inst_abort(esr) && (vma->vm_flags & VM_EXEC) == 0) {
         printk(PT_ERROR, "%s: instruction fault on non-exec vma va=%lx esr=%lx flags=%x\n\r",
                __FUNCTION__, page_align_vaddr, esr, vma->vm_flags);
-        return;
+        return -EINVAL;
     }
 
-    user_vma_map_page_fault(tsk, vma, page_align_vaddr);
+    return user_vma_map_page_fault(tsk, vma, page_align_vaddr);
 }
 
 void abnormal_scene_display(int err_type,uint64_t esr,uint64_t exce_address){
@@ -292,9 +298,12 @@ void do_el0_sync(struct pt_regs *regs,uint64_t addr, uint64_t esr)
         ret = sys_call_entry(syscallno,regs);
         regs->regs[0] = ret;
     }else if(is_user_data_abort(esr) || is_user_inst_abort(esr)){
-        show_pt_regs(regs);
-        printk(PT_ERROR,"%s:%d vaddr=%lx, esr=%lx\n\r",__FUNCTION__,__LINE__,addr,esr);
-        page_fault(cur_task,addr,esr);
+        ret = page_fault(cur_task,addr,esr);
+        if(ret < 0){
+            show_pt_regs(regs);
+            printk(PT_ERROR,"%s:%d vaddr=%lx, esr=%lx ret=%d\n\r",
+                   __FUNCTION__,__LINE__,addr,esr,ret);
+        }
 
     }else if(is_kernel_data_abort(esr)){
         show_pt_regs(regs);
@@ -303,7 +312,6 @@ void do_el0_sync(struct pt_regs *regs,uint64_t addr, uint64_t esr)
         printk(PT_ERROR,"%s:%d vaddr=%lx, esr=%lx\n\r",__FUNCTION__,__LINE__,addr,esr);
         show_pt_regs(regs);
     }
-
     /*
 2024.06.01；PM:20:59
 最近几天一直看抢占,网上文章都写的非常好，本来我就想搞个简单系统，先不引入抢占，但是看了抢占，就想引入抢占，然后就这么胡乱写了一通，也是释放压力一种方式
