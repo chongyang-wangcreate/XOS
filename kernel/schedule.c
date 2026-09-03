@@ -121,7 +121,7 @@ static void sched_queue_rr_tick(runque_t runqueue[], struct task_struct *curr)
         curr->timerslice_count = curr->timeslice;
         list_del(&curr->cpu_list);
         list_add_front(&curr->cpu_list, &runqueue[curr->prio].run_list);
-        current_task_info_new()->need_switch_flags = 1;
+        curr->need_switch = 1;
     }
 }
 

@@ -126,12 +126,13 @@ void xos_irq_el1_entry(struct pt_regs *regs)
 
     irq_exit();
 
-    if(current_task_info_new()->need_switch_flags == 1)
+    if(current_task != NULL && current_task->need_switch == 1)
     {
-        current_task_info_new()->need_switch_flags = 0;
+        current_task->need_switch = 0;
         int_schedule();
     }
 }
+
 
 
 void show_pt_regs(const struct pt_regs *regs)
@@ -180,9 +181,9 @@ void xos_irq_el0_entry(struct pt_regs *regs)
         3. 处理挂起的信号linux 内核使用do_notify_resume()
     */
 
-    if(current_task_info_new()->need_switch_flags == 1)
+    if(current_task != NULL && current_task->need_switch == 1)
     {
-        current_task_info_new()->need_switch_flags = 0;
+        current_task->need_switch = 0;
         int_schedule();
     }
     /*
@@ -190,4 +191,5 @@ void xos_irq_el0_entry(struct pt_regs *regs)
     */
 
 }
+
 

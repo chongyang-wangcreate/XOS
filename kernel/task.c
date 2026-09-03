@@ -70,16 +70,17 @@ static int task_prio_valid(struct task_struct *task)
 
 static void rq_update_preempt(struct task_struct *task)
 {
-    if(get_load_flags() != 0 && task->prio < current_task->prio){
-        current_task_info_new()->need_switch_flags = 1;
+    struct task_struct *curr = current_task;
+    if(get_load_flags() != 0 && curr != NULL && task->prio < current_task->prio){
+        curr->need_switch = 1;
     }
 }
 
 void init_fs_context(struct task_struct *parent, struct task_struct *child)
 {
     if(!parent){
+        memset(&child->fs_context,0,sizeof(child->fs_context));
         xos_spinlock_init(&child->fs_context.lock);
-        printk(PT_ERROR,"%s:%d FFFFFFF\n\r",__FUNCTION__,__LINE__);
     }else{
         memcpy(&child->fs_context,&parent->fs_context,sizeof(parent->fs_context));
         xos_spinlock_init(&child->fs_context.lock);
@@ -117,12 +118,13 @@ void add_to_cpu_runqueue(int cpuid,struct task_struct *task)
             set_bit((uint8_t*)(cpu_array[cpuid].run_bitmap.bit_start), task->prio); /*2024.0404 20.12还需要增加同优先级优先级统计计数*/
         }
         if(get_load_flags() != 0){
-             if(task->prio < current_task->prio){
+            struct task_struct *curr = current_task;
+            if(curr != NULL && task->prio < curr->prio){
                 /*
                     设置调度标志
                 */
                // printk(PT_RUN,"%s:%d,task->prio=%d,current_task->prio=%d\n\r",__FUNCTION__,__LINE__,task->prio,current_task->prio);
-                current_task_info_new()->need_switch_flags = 1;
+                curr->need_switch = 1;
             }
         }
         list_add_back(&task->cpu_list,&cpu_runque->run_list);
@@ -231,6 +233,7 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
 {
 
     int cpuid;
+    uint64 flags;
     thread_union_t *stack;
     cpuid = cur_cpuid();
 //    struct task_struct *child = (struct task_struct *)alloc_page();
@@ -292,7 +295,7 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
     list_init(&child->delay_list);
     list_init(&child->wait_list);
     list_init(&child->mutex_list);
-    init_fs_context(current_task, child);
+    init_fs_context(NULL, child);
     memset(&child->files_set.fd_set,0,sizeof(child->files_set.fd_set));
     child->files_set.fd_map.bit_start = (uint8_t*)child->files_set.fd_set;
     child->files_set.fd_map.btmp_bytes_len = sizeof(child->files_set.fd_set);
@@ -308,9 +311,9 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
     space_idx++;
     dup_list_add_after(&child->g_list, &task_global_list);
 
-    arch_local_irq_disable();
+    flags = arch_local_irq_save();
     add_to_cpu_runqueue(cpuid,child);
-    arch_local_irq_enable();
+    arch_local_irq_restore(flags);
 
 //	add_to_g_list(child);
 alloc_stack_faild:
@@ -376,9 +379,12 @@ alloc_stack_faild:
 
 struct task_struct *get_current_task(void)
 {
-
-    struct task_struct *ti = current_task_info_new()->p_task; 
-	return ti;
+    int cpuid;
+    cpuid = cur_cpuid();
+    if(cpuid < 0 || cpuid >= CPU_NR){
+        return NULL;
+    }
+    return cpu_array[cpuid].cur_task;
 }
 
 int get_task_status()

@@ -146,8 +146,8 @@ void xos_sleep_timerout(struct timer_struct *timer, void *arg)
     list_add_front(&l_cur_task->cpu_list,&cpu_array[cur_cpuid()].runqueue[l_cur_task->prio].run_list);
     #endif
 
-    if(l_cur_task->prio  < current_task->prio){
-        current_task_info_new()->need_switch_flags = 1;
+    if(current_task != NULL && l_cur_task->prio  < current_task->prio){
+        current_task->need_switch = 1;
     }
     
 }
