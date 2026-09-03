@@ -408,7 +408,7 @@ int create_dev_vma(struct task_struct *cur_task,uint64 dev_start,uint64 dev_end,
 
     ret = create_vma(cur_task, (uint64)dev_start,
         (uint64)dev_end,
-        (uint64)(usr_phy_start), VM_READ | VM_WRITE);
+        (uint64)(usr_phy_start), VM_READ | VM_WRITE | VM_SHARED);
     if (ret < 0) {
         printk(PT_DEBUG,"setup_vma for user dev failed\n");
         ret = -EDEV_VMA;
@@ -506,7 +506,7 @@ void process_create()
     struct task_struct *cur_task = NULL;
     cpuid = cur_cpuid();
 
-    cur_task = (struct task_struct *)xos_get_free_page(0,1);
+    cur_task = (struct task_struct *)xos_get_free_page(0,2);
 //  cur_task = xos_kmalloc(sizeof (struct task_struct));
 
     unsigned long buf_start = (unsigned long)task_buf;  // 获取 task_buf 的起始地址
@@ -556,7 +556,7 @@ void process_create()
     cur_task->timerslice_count = cur_task->timeslice;
     cur_task->cpu_context.pc = (unsigned long)ret_from_fork;
     cur_task->cpu_context.sp = (unsigned long)cur_regs;  //栈顶
-    cur_task->kstack = cur_regs;
+    cur_task->kstack = kstack;
     cur_task->cpu_context.x19 = 0;  /*very important*/
     cur_task->cpu_context.x22 = 5097;
     cur_task->cpu_context.x23 = 5098;
