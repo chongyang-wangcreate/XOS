@@ -12,6 +12,7 @@ OBJDUMP = $(CROSSCOMPILE)objdump
 CFLAGS := \
     -march=armv8-a \
     -mtune=cortex-a57 \
+    -mgeneral-regs-only \
     -ffreestanding \
     -fno-pic \
     -fno-builtin \
