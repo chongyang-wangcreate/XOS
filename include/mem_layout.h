@@ -56,8 +56,9 @@ TTBR0_EL1 → L1用户页表 (l1upgt) -> L2用户页表 (l2upgt)
 
 /* 计算已使用的物理内存 */
 extern uint8_t kernel_end[]; 
+extern uint8_t _user_image_end_lma_virt[];
 #define RESERVED_MEM_START   PHYS_MEM_START
-#define RESERVED_MEM_END     ((uintptr_t)_kernel_page_array_start - VA_KERNEL_START)
+#define RESERVED_MEM_END     ((uintptr_t)_user_image_end_lma_virt - VA_KERNEL_START - 1)
 
 
 /* ========== Zone 空闲内存区域 ========== */

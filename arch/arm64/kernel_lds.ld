@@ -8,6 +8,9 @@ KERNEL_START = 0xFFFFFF8000000000;
 BOOT_MEM_SIZE = 0x200000;
 PAGE_SIZE = 4096;
 PAGE_TABLE_RAM_SIZE = 0x2000000;
+KERNEL_SECTION_GUARD_SIZE = 0x1000;
+USER_SECTION_GUARD_SIZE = 0x1000;
+IMAGE_TAIL_GUARD_SIZE = 0x200000;
 
 /* 用户空间参数 */
 USER_VADDR_START = 0x08048000;
@@ -19,10 +22,6 @@ KERNEL_LINEAR_START = KERNEL_START + LOAD_ADDR_START;
 
 /* 主栈大小（保留原有定义） */
 MAIN_STACK_SIZE = 0x10000;
-
-KERNEL_PAGE_ARRAY_SIZE = (64*1024*1024);
-USER_PAGE_ARRAY_SIZE = (256*1024*1024);
-DMA_PAGE_ARRAY_SIZE = (32*1024*1024);
 
 SECTIONS {
     /* ========== 内核虚拟地址起始 ========== */
@@ -37,6 +36,8 @@ SECTIONS {
     }
 
     . = ALIGN(4096);
+    . += KERNEL_SECTION_GUARD_SIZE;
+    . = ALIGN(4096);
 
     
     .text : AT(ADDR(.text) - 0xffffff8000000000) {
@@ -46,6 +47,8 @@ SECTIONS {
     . = ALIGN(4096);
     ktext_end = .;
     _etext = .;
+    . += KERNEL_SECTION_GUARD_SIZE;
+    . = ALIGN(4096);
 
    
     .rodata : AT(ADDR(.rodata) - 0xffffff8000000000) {
@@ -56,6 +59,9 @@ SECTIONS {
         _erodata = .;
     }
     . = ALIGN(4096);
+    . += KERNEL_SECTION_GUARD_SIZE;
+    . = ALIGN(4096);
+
     .data : AT(ADDR(.data) - 0xffffff8000000000) {
         _sdata = .;
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).data)
@@ -64,6 +70,9 @@ SECTIONS {
     }
 
     . = ALIGN(4096);
+    . += KERNEL_SECTION_GUARD_SIZE;
+    . = ALIGN(4096);
+
     .bss : AT(ADDR(.bss) - 0xffffff8000000000) {
         __bss_start = .;
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).bss)
@@ -75,6 +84,9 @@ SECTIONS {
     __bss_stop = .;
      
     . = ALIGN(4096);
+    . += KERNEL_SECTION_GUARD_SIZE;
+    . = ALIGN(4096);
+
     __init_begin = .;
     .kernel_reserved : AT(ADDR(.kernel_reserved) - 0xffffff8000000000) {
         /* 主栈 */
@@ -106,28 +118,6 @@ SECTIONS {
         . += 0x200000;          /* 2MB */
         PROVIDE(_zone_metadata_end = .);
 
-       
-        . = ALIGN(4096);
-        PROVIDE(_kernel_page_array_start = .);
-        PROVIDE(_kernel_page_array = .);
-        . += KERNEL_PAGE_ARRAY_SIZE;
-        PROVIDE(_kernel_page_array_end = .);
-
-        
-        . = ALIGN(4096);
-        PROVIDE(_user_page_array_start = .);
-        PROVIDE(_user_page_array = .);
-        . += USER_PAGE_ARRAY_SIZE;
-        PROVIDE(_user_page_array_end = .);
-
-        
-        . = ALIGN(4096);
-        PROVIDE(_dma_page_array_start = .);
-        PROVIDE(_dma_page_array = .);
-        . += DMA_PAGE_ARRAY_SIZE;
-        PROVIDE(_dma_page_array_end = .);
-
-        
         . = ALIGN(4096);
         PROVIDE(_page_arrays_end = .);
     }
@@ -141,13 +131,13 @@ SECTIONS {
 
     /* 用户段虚拟地址 */
     . = USER_VADDR_START;
-    user_lma_base = ALIGN(LOADADDR(.kernel_reserved) + SIZEOF(.kernel_reserved),PAGE_SIZE);
+    user_lma_base = ALIGN(LOADADDR(.kernel_reserved) + SIZEOF(.kernel_reserved) + KERNEL_SECTION_GUARD_SIZE,PAGE_SIZE);
 
 
     .user_text : AT(user_lma_base) {
         PROVIDE(user_text_start = .);
         output/usr/*.o(.text .text.*)
-        toutput/usr/libc/*.o(.text .text.*)
+        output/usr/libc/*.o(.text .text.*)
         PROVIDE(user_text_end = ALIGN(PAGE_SIZE));
         . = user_text_end;
     }
@@ -155,7 +145,7 @@ SECTIONS {
     PROVIDE(_user_text_eaddr = user_text_end);
     PROVIDE(_user_text_lma = LOADADDR(.user_text));
 
-    .user_rodata : AT(ALIGN(LOADADDR(.user_text) +SIZEOF(.user_text), PAGE_SIZE)) {
+    .user_rodata : AT(ALIGN(LOADADDR(.user_text) + SIZEOF(.user_text) + USER_SECTION_GUARD_SIZE, PAGE_SIZE)) {
         PROVIDE(user_rodata_start = .);
         output/usr/*.o(.rodata .rodata.*)
         output/usr/libc/*.o(.rodata .rodata.*)
@@ -167,7 +157,7 @@ SECTIONS {
     PROVIDE(_user_rodata_eaddr = user_rodata_end);
     PROVIDE(_user_rodata_lma = LOADADDR(.user_rodata));
 
-    .user_data : AT(ALIGN(LOADADDR(.user_rodata) +SIZEOF(.user_rodata), PAGE_SIZE)) {
+    .user_data : AT(ALIGN(LOADADDR(.user_rodata) + SIZEOF(.user_rodata) + USER_SECTION_GUARD_SIZE, PAGE_SIZE)) {
         PROVIDE(user_data_start = .);
         output/usr/*.o(.data .data.*)
         output/usr/libc/*.o(.data .data.*)
@@ -178,7 +168,7 @@ SECTIONS {
     PROVIDE(_user_data_eaddr = user_data_end);
     PROVIDE(_user_data_lma = LOADADDR(.user_data));
 
-    .user_bss : AT(ALIGN(LOADADDR(.user_data) +SIZEOF(.user_data), PAGE_SIZE)) {
+    .user_bss : AT(ALIGN(LOADADDR(.user_data) + SIZEOF(.user_data) + USER_SECTION_GUARD_SIZE, PAGE_SIZE)) {
         PROVIDE(user_bss_start = .);
         output/usr/*.o(.bss .bss.* COMMON)
         output/usr/libc/*.o(.bss .bss.* COMMON)
@@ -188,6 +178,9 @@ SECTIONS {
     PROVIDE(_user_bss_saddr = user_bss_start);
     PROVIDE(_user_bss_eaddr = user_bss_end);
     PROVIDE(_user_bss_lma = LOADADDR(.user_bss));
+    PROVIDE(_user_image_raw_end_lma = ALIGN(LOADADDR(.user_bss) + SIZEOF(.user_bss), PAGE_SIZE));
+    PROVIDE(_user_image_end_lma = ALIGN(_user_image_raw_end_lma + IMAGE_TAIL_GUARD_SIZE, PAGE_SIZE));
+    PROVIDE(_user_image_end_lma_virt = KERNEL_START + _user_image_end_lma);
     PROVIDE (_user_vma = _user_text_saddr);
     PROVIDE (_user_lma = _user_text_lma);
 
@@ -202,6 +195,9 @@ SECTIONS {
         *(.comment)
         *(.eh_frame)
     }
+
+    ASSERT(kernel_end_phys < _user_text_lma, "kernel reserved overlaps user image lma")
+    ASSERT(_user_image_end_lma <= 0x80000000, "kernel/user image exceeds supported RAM window")
 }
 
 __bss_size = (__bss_end - __bss_start) >> 3;

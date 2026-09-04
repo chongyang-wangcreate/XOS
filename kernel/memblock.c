@@ -4,8 +4,8 @@
 #include "mem_layout.h"
 #include "device_tree.h"
 #include "memblock.h"
-extern uint8_t _kernel_page_array_start[];
-extern uint8_t _kernel_page_array_end[];
+//extern uint8_t _kernel_page_array_start[];
+//extern uint8_t _kernel_page_array_end[];
 #define XOS_MEMBLOCK_ALIGN 0x1000UL
 
 static xos_memblock_info_t g_memblock_info;
@@ -45,7 +45,7 @@ int xos_memblock_init()
         mem_start = PHYS_MEM_START;
     }
     if(mem_end > PHYS_MEM_END){
-        mem_start = PHYS_MEM_END;
+        mem_end = PHYS_MEM_END;
     }
     if(mem_end < mem_start){
         printk(PT_ERROR,"%s:%d\n\r",__FUNCTION__,__LINE__);
