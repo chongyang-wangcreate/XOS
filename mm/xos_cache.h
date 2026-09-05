@@ -85,16 +85,21 @@ typedef struct mem_pool{
     真正操作内存块的结构,内存等分对象描述符
     类似磁盘块的管理，本结构管理的内存块不易过多，管理过多的内存块不管bitmap 的空间占比
     还是轮询时间占比都会极大提升，效率下降。
+
+    2025.10.18:PM:20:30 重构mem_obj 不再使用bitmap,bitmap 管理繁琐而且随着管理内存
+    块的增多，bitmap 空间占比变大，轮询耗时也比较长
 */
 typedef struct mem_obj{
     struct list_head list; //链表节点与free_list  partial_list 或者full_list 相关联
     char *start_addr; //起始地址
-    int index;// index 内存块标识
+    void *free_head;
+    uint32_t magic;
+    int total_count;
     int free_count;
     int use_count;
     int block_size;
+    int page_order;
     cache_block_t *cache_block; //确定自己属于那个caceh_block;
-    bitmap_t mem_map;
     
 }mem_obj_t;
 

@@ -31,6 +31,17 @@
 extern xos_zone_t zone_normal;
 
 /*
+    设置两个魔数
+*/
+#define CACHE_SLAB_MAGIC  0x58434d53U
+#define CACHE_LARGE_MAGIC 0x58434d4cU
+
+typedef struct cache_alloc_hdr {
+    uint32_t magic;
+    mem_obj_t *mem_node;
+} cache_alloc_hdr_t;
+
+/*
     20240406 PM:15:14
     cache 管理的内存从buddy获取,
     kmalloc  zalloc  首先是遍历对应的size 长度的cache 链表，如果没有空闲节点
@@ -159,134 +170,202 @@ void mem_cache_init()
         osp_mem_block_init(&mem_size_set[i],mem_size_set[i].cache_bsize);
     }
 }
+
+static void cache_list_move(dlist_t *node, dlist_t *head)
+{
+    list_del(node);
+    list_add_back(node, head);
+}
+
+static void cache_build_free_list(mem_obj_t *mem_node)
+{
+    char *block;
+    int i;
+
+    mem_node->free_head = NULL;
+    for(i = mem_node->total_count - 1; i >= 0; i--){
+        block = mem_node->start_addr + i * mem_node->block_size;
+        *(void **)block = mem_node->free_head;
+        mem_node->free_head = block;
+    }
+}
+
+static mem_obj_t *cache_new_slab(cache_block_t *cache_block)
+{
+    mem_obj_t *mem_node;
+    char *p_start;
+    uint64_t start_addr;
+    uint64_t alloc_size;
+    int order;
+    
+    order = 0;
+    /*
+        计算需要申请的页数量
+    */
+    alloc_size = PAGE_SIZE;
+    while(alloc_size < (uint64_t)OBJ_ALLOC_SIZE &&
+          alloc_size < ((uint64_t)cache_block->obj_block_size *
+                        cache_block->obj_block_count + sizeof(mem_obj_t))){
+        order++;
+        alloc_size = PAGE_SIZE << order;
+    }
+
+    p_start = (char*)xos_get_free_page(0, order);
+    if(p_start == NULL){
+        return NULL;
+    }
+
+    mem_node = (mem_obj_t*)p_start;
+    mem_node->magic = CACHE_SLAB_MAGIC;
+    mem_node->use_count = 0;
+    mem_node->block_size = cache_block->obj_block_size;
+    mem_node->page_order = order;
+    mem_node->cache_block = cache_block;
+    list_init(&mem_node->list);
+
+    start_addr = ALIGN_UP((uint64_t)(p_start + sizeof(mem_obj_t)), 8);
+    mem_node->start_addr = (char *)start_addr;
+    mem_node->total_count = (int)((p_start + alloc_size - mem_node->start_addr) /
+                                  mem_node->block_size);
+    mem_node->free_count = mem_node->total_count;
+    if(mem_node->total_count <= 0){
+        mem_node->magic = 0;
+        xos_free_page(p_start);
+        return NULL;
+    }
+
+    cache_build_free_list(mem_node);
+    list_add_back(&mem_node->list, &cache_block->free_list);
+    return mem_node;
+}
+
+static void *cache_slab_alloc_one(mem_obj_t *mem_node)
+{
+    cache_alloc_hdr_t *hdr;
+    char *block;
+    void *addr;
+
+    if(mem_node->free_head == NULL || mem_node->free_count <= 0){
+        return NULL;
+    }
+
+    block = mem_node->free_head;
+    mem_node->free_head = *(void **)block;
+    mem_node->use_count++;
+    mem_node->free_count--;
+
+    hdr = (cache_alloc_hdr_t *)block;
+    hdr->magic = CACHE_SLAB_MAGIC;
+    hdr->mem_node = mem_node;
+    addr = (void *)(hdr + 1);
+    return addr;
+}
+
+static void cache_slab_requeue(mem_obj_t *mem_node)
+{
+    cache_block_t *cache_block = mem_node->cache_block;
+
+    if(mem_node->free_count == 0){
+        cache_list_move(&mem_node->list, &cache_block->full_list);
+    }else if(mem_node->use_count == 1){
+        cache_list_move(&mem_node->list, &cache_block->partial_list);
+    }
+}
+
+#ifdef CONFIG_CACHE_DEBUG
+static int cache_slab_contains_free_block(mem_obj_t *mem_node, void *addr)
+{
+    void *node;
+    int count = 0;
+
+    node = mem_node->free_head;
+    while(node != NULL && count < mem_node->free_count){
+        if(node == addr){
+            return 1;
+        }
+        node = *(void **)node;
+        count++;
+    }
+    return 0;
+}
+#endif
+
+static int cache_alloc_order(int size)
+{
+    int order = 0;
+    int pages = (size + (int)sizeof(mem_obj_t) +
+                 (int)sizeof(cache_alloc_hdr_t) + PAGE_SIZE - 1) >> PAGE_SHIFT;
+
+    while((1 << order) < pages){
+        order++;
+    }
+    return order;
+}
+
+static void *cache_large_alloc(int size)
+{
+    mem_obj_t *mem_node;
+    cache_alloc_hdr_t *hdr;
+    char *p_start;
+    int order;
+
+    order = cache_alloc_order(size);
+    p_start = (char *)xos_get_free_page(0, order);
+    if(p_start == NULL){
+        return NULL;
+    }
+
+    mem_node = (mem_obj_t *)p_start;
+    mem_node->magic = CACHE_LARGE_MAGIC;
+    mem_node->start_addr = (char *)ALIGN_UP((uint64_t)(p_start + sizeof(mem_obj_t)), 8);
+    mem_node->free_head = NULL;
+    mem_node->total_count = 1;
+    mem_node->free_count = 0;
+    mem_node->use_count = 1;
+    mem_node->block_size = size;
+    mem_node->page_order = order;
+    mem_node->cache_block = NULL;
+    list_init(&mem_node->list);
+
+    hdr = (cache_alloc_hdr_t *)mem_node->start_addr;
+    hdr->magic = CACHE_LARGE_MAGIC;
+    hdr->mem_node = mem_node;
+    return (void *)(hdr + 1);
+}
+
 /*
     当前mem_cache 基本问题是，cache 无可用空间时，只能分配一个页进行拆分
     我的mem_node 获取是基于page 页首地址，这样释放addr 4K 对齐时就可以
     找到对应mem_node 结构体
 
+    2026.04.04 PM:11.23 
+    refactor __mem_cache_alloc
 */
 static void* __mem_cache_alloc(cache_block_t *cache_block)
 {
     mem_obj_t  *mem_node;
     dlist_t *list_node;
-    char *p_start;
-    int tmp_alloc_size;
-    int bitmap_take_size;
-    int block_count;
-    int block_index = 0;
     void *alloc_addr = NULL;
     unsigned long flags;
 
     flags = arch_local_irq_save();
 
-    if(list_is_empty(&cache_block->free_list)){
-        if(list_is_empty(&cache_block->partial_list)){
-            /*
-                本cache 真没有可用空间
-                需要再向buddy 内存分配器申请，申请固定4K 页
-            */
-            p_start = (char*)xos_get_free_page(0, 0);
-            if(p_start == NULL){
-                goto out;
-            }
-            tmp_alloc_size = (1 << PAGE_SHIFT);
-            /*
-                初始化mem_node
-            */
-            mem_node = (mem_obj_t*)p_start;
-            printk(PT_DEBUG,"%s:%d,tmp_alloc_size=%d\n\r",__FUNCTION__,__LINE__,tmp_alloc_size);
-            mem_node->use_count = 0;
-            mem_node->block_size = cache_block->obj_block_size;
-            mem_node->cache_block = cache_block;
-            /*
-                ((tmp_alloc_size - sizeof(mem_obj_t) -x_size)/cache_block->obj_block_size/8 = x_size
-                使用上述公式就能解出x_size 大小
-                 ((tmp_alloc_size - sizeof(mem_obj_t)) = x_size*8*cache_block->obj_block_size+x_size
-                 x_size = ((tmp_alloc_size - sizeof(mem_obj_t))/(8*cache_block->obj_block_size+1)
-            */ 
-            bitmap_take_size = ((tmp_alloc_size - sizeof(mem_obj_t))/(8*cache_block->obj_block_size+1));
-            
-            mem_node->start_addr = (char*)ALIGN_UP(((uint64_t)(p_start + (sizeof(mem_obj_t)) +bitmap_take_size)),8);
-            mem_node->mem_map.btmp_bytes_len = (tmp_alloc_size - sizeof(mem_obj_t) -bitmap_take_size)/8;// 表示(1024位)
-            mem_node->mem_map.bit_start = (uint8*)(mem_node->start_addr + (sizeof(mem_obj_t)));
-            mem_node->free_count = bitmap_take_size*8;
-            block_count = (tmp_alloc_size - sizeof(mem_obj_t)) /
-                          cache_block->obj_block_size;
-            bitmap_take_size = (block_count + 7) / 8;
-            mem_node->mem_map.btmp_bytes_len = bitmap_take_size;
-            mem_node->mem_map.bit_start = (uint8*)(p_start + sizeof(mem_obj_t));
-            mem_node->start_addr = (char*)ALIGN_UP(((uint64_t)(mem_node->mem_map.bit_start + bitmap_take_size)), 8);
-            block_count = (p_start + tmp_alloc_size - mem_node->start_addr) /
-                          cache_block->obj_block_size;
-            mem_node->free_count = block_count;
-            printk(PT_DEBUG,"%s:%d,mem_node->mem_map.btmp_bytes_len=%d\n\r",__FUNCTION__,__LINE__,mem_node->mem_map.btmp_bytes_len);
-            printk(PT_DEBUG,"%s:%d,bitmap_take_size=%d,cache_block->obj_block_size=%d\n\r",__FUNCTION__,__LINE__,bitmap_take_size,cache_block->obj_block_size);
-            bitmap_init(&mem_node->mem_map);
-            /*
-                切一块空间，然后加入到partial_list 链表，加入链表之后
-                再修改bitmap
-            */
-            block_index = find_free_bit((bitmap_t *)&mem_node->mem_map);
-            if(block_index < 0){
-                alloc_addr = NULL;
-                goto out;
-            }
-            
-            alloc_addr = mem_node->start_addr+ block_index *cache_block->obj_block_size;
-            set_bit((uint8_t*)mem_node->mem_map.bit_start, block_index);
-            mem_node->use_count++;
-            mem_node->free_count--;
-            if(mem_node->free_count == 0){
-                list_add_back(&mem_node->list, &cache_block->full_list);
-            }else{
-                list_add_back(&mem_node->list, &cache_block->partial_list);
-            }
-        }else{
-            /*
-                从partial_list 链表中获取节点,分配完毕之后判断本节点管理的内存块是否分配完毕
-                如果分配完毕则先脱链，然后加入到full_list 链表
-            */
-            printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
-            list_node = cache_block->partial_list.next;
-            mem_node = list_entry(list_node, mem_obj_t, list);
-            block_index = find_free_bit(&mem_node->mem_map);
-            if(block_index < 0){
-                alloc_addr = NULL;
-                goto out;
-            }
-            alloc_addr = mem_node->start_addr+ block_index *cache_block->obj_block_size;
-            set_bit((uint8_t*)mem_node->mem_map.bit_start, block_index);
-            /*
-                将当前mem_node 加入到当前cache_block->partial_list 中
-            */
-            mem_node->use_count++;
-            mem_node->free_count--;
-            if(mem_node->free_count == 0){
-                list_del(&mem_node->list);
-                list_add_back(&mem_node->list,&cache_block->full_list);
-            }
-        }
+    if(!list_is_empty(&cache_block->partial_list)){
+        list_node = cache_block->partial_list.next;
+        mem_node = list_entry(list_node, mem_obj_t, list);
+    }else if(!list_is_empty(&cache_block->free_list)){
+        list_node = cache_block->free_list.next;
+        mem_node = list_entry(list_node, mem_obj_t, list);
     }else{
-
-        printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
-        list_node =  cache_block->free_list.next;
-        mem_node = list_entry(list_node,mem_obj_t,list);
-        block_index = find_free_bit((bitmap_t *)&mem_node->mem_map);
-        if(block_index < 0){
-            alloc_addr = NULL;
+        mem_node = cache_new_slab(cache_block);
+        if(mem_node == NULL){
             goto out;
         }
-        alloc_addr = mem_node->start_addr+ block_index *cache_block->obj_block_size;
-        set_bit((uint8_t*)mem_node->mem_map.bit_start, block_index);
-        list_del(&mem_node->list);
-        mem_node->use_count++;
-        mem_node->free_count--;
-        if(mem_node->free_count == 0){
-            list_add_back(&mem_node->list, &cache_block->full_list);
-        }else{
-            list_add_back(&mem_node->list, &cache_block->partial_list);
-        }
+    }
 
+    alloc_addr = cache_slab_alloc_one(mem_node);
+    if(alloc_addr != NULL){
+        cache_slab_requeue(mem_node);
     }
 out:
     arch_local_irq_restore(flags);
@@ -322,33 +401,25 @@ int get_size_index(int size)
 
 void *mem_cache_alloc(int size)
 {
-    void *mem_ptr;
     cache_block_t *local_cache_block;
+    int index;
+    int need_size;
 
-    if(size > mem_size_set[6].cache_bsize){
-        int order = 0;
-        int pages = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
-
-        while((1 << order) < pages){
-            order++;
-        }
-        mem_ptr = xos_get_free_page(0, order);
-        printk(PT_DEBUG,"%s:%d,size=%d,mem_ptr=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)mem_ptr);
-
-        return mem_ptr;
+    need_size = size + sizeof(cache_alloc_hdr_t);
+    if(need_size > mem_size_set[6].cache_bsize){
+        return cache_large_alloc(size);
     }
 
-       
-    local_cache_block = GET_MEM_BLOCK(get_size_index(size));
+    index = get_size_index(need_size);
+    local_cache_block = GET_MEM_BLOCK(index);
 
-    local_cache_block->obj_block_size = GET_BLOCK_SIZE(get_size_index(size));
-    printk(PT_RUN,"%s:%d,size=%d,local_cache_block->obj_block_size=%d\n\r",__FUNCTION__,__LINE__,size,local_cache_block->obj_block_size);
-
+    local_cache_block->obj_block_size = GET_BLOCK_SIZE(index);
 
     return __mem_cache_alloc(local_cache_block);
 }
 
 /*
+    2026.09.04 23:23
     mem_cache 管理是基于buddy 管理的
     在释放addr 空间时，首先要做的就是确定addr 对应的paddr 属于那个页帧
     1. addr 4K 对齐
@@ -362,35 +433,75 @@ void *mem_cache_alloc(int size)
 void mem_cache_free(void *addr)
 {
     mem_obj_t  *mem_node;
-    int bindex;
+    cache_alloc_hdr_t *hdr;
+    char *block;
     unsigned long flags;
-    unsigned long align_addr = ALIGN_DOWN(addr, PAGE_SIZE);
     if(addr == NULL){
         return;
     }
 
     flags = arch_local_irq_save();
-    /*
-        每个也都是4K 对齐
-        获取mem_node 结构的地址
-    */
-    mem_node = (mem_obj_t*)align_addr;
-    bindex = ((char*)addr - mem_node->start_addr)/mem_node->block_size;
-    /*
-        设置Bitmap,清除对应的bit 位
-    */
-    clear_bit((uint8_t*)mem_node->mem_map.bit_start, bindex);
+    hdr = ((cache_alloc_hdr_t *)addr) - 1;
+    mem_node = hdr->mem_node;
+
+    if(mem_node == NULL || hdr->magic != mem_node->magic){
+        printk(PT_ERROR,"%s:%d invalid cache addr=%lx\n\r",
+               __FUNCTION__,__LINE__,(unsigned long)addr);
+        arch_local_irq_restore(flags);
+        return;
+    }
+
+    if(mem_node->magic == CACHE_LARGE_MAGIC){
+        hdr->magic = 0;
+        mem_node->magic = 0;
+        arch_local_irq_restore(flags);
+        xos_free_page((void *)mem_node);
+        return;
+    }
+
+    if(mem_node->magic != CACHE_SLAB_MAGIC || mem_node->cache_block == NULL){
+        printk(PT_ERROR,"%s:%d invalid cache addr=%lx\n\r",
+               __FUNCTION__,__LINE__,(unsigned long)addr);
+        arch_local_irq_restore(flags);
+        return;
+    }
+
+    block = (char *)hdr;
+    if(block < mem_node->start_addr ||
+       block >= mem_node->start_addr +
+                mem_node->total_count * mem_node->block_size ||
+       (block - mem_node->start_addr) % mem_node->block_size){
+        printk(PT_ERROR,"%s:%d invalid block addr=%lx\n\r",
+               __FUNCTION__,__LINE__,(unsigned long)addr);
+        arch_local_irq_restore(flags);
+        return;
+    }
+
+    if(mem_node->free_count >= mem_node->total_count || mem_node->use_count <= 0){
+        printk(PT_ERROR,"%s:%d double free addr=%lx\n\r",
+               __FUNCTION__,__LINE__,(unsigned long)addr);
+        arch_local_irq_restore(flags);
+        return;
+    }
+#ifdef CONFIG_CACHE_DEBUG
+    if(cache_slab_contains_free_block(mem_node, block)){
+        printk(PT_ERROR,"%s:%d double free block addr=%lx\n\r",
+               __FUNCTION__,__LINE__,(unsigned long)addr);
+        arch_local_irq_restore(flags);
+        return;
+    }
+#endif
+    hdr->magic = 0;
+    hdr->mem_node = NULL;
+    *(void **)block = mem_node->free_head;
+    mem_node->free_head = block;
     mem_node->free_count++;
-    if(mem_node->use_count != 0)
     mem_node->use_count--;
-    if(mem_node->cache_block != NULL){
-        if(mem_node->use_count == 0){
-            list_del(&mem_node->list);
-            list_add_back(&mem_node->list, &mem_node->cache_block->free_list);
-        }else if(mem_node->free_count == 1){
-            list_del(&mem_node->list);
-            list_add_back(&mem_node->list, &mem_node->cache_block->partial_list);
-        }
+
+    if(mem_node->use_count == 0){
+        cache_list_move(&mem_node->list, &mem_node->cache_block->free_list);
+    }else if(mem_node->free_count == 1){
+        cache_list_move(&mem_node->list, &mem_node->cache_block->partial_list);
     }
     arch_local_irq_restore(flags);
     
@@ -410,3 +521,4 @@ void xos_cache_init()
 {
 //    cache_val.cache_obj_buf[0].size = 32;
 }
+
