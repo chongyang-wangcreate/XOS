@@ -12,8 +12,8 @@
 #define	MAX_ORDER	11
 
 enum {
-    ZONE_KERNEL,
     ZONE_DMA,
+    ZONE_KERNEL,
     ZONE_USER,
     ZONE_MAX
 };

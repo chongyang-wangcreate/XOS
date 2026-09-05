@@ -34,7 +34,6 @@
 */
 
 
-
 #include "types.h"
 #include "list.h"
 #include "spinlock.h"
@@ -53,13 +52,7 @@
 #include "memblock.h"
 
 #define NORMAL_PAGE_SIZE (1 << 12)
-#define BUDDY_ALIGN  (1 <(PAGE_SHIFT + MAX_ORDER -1))
-extern uint8_t _kernel_page_array_start[];
-extern uint8_t _kernel_page_array_end[];
-extern uint8_t _user_page_array_start[];
-extern uint8_t _user_page_array_end[];
-extern uint8_t _dma_page_array_start[];
-extern uint8_t _dma_page_array_end[];
+#define BUDDY_ALIGN  (1UL << (PAGE_SHIFT + MAX_ORDER - 1))
 
 /* Zone 全局变量 */
 xos_zone_t zone_normal = {0};
@@ -70,38 +63,27 @@ static uint64 g_zone_linear_map_start;
 static uint64 g_zone_linear_map_end;
 int g_zone_layout_set_done;
 
-/* 声明外部符号（来自lds） */
-extern uint8_t _zone_metadata_start[];
-extern uint8_t _kernel_page_array_start[];
-extern uint8_t _user_page_array_start[];
-extern uint8_t _dma_page_array_start[];
-extern void put_hex(uint64_t val);
-
-
 static xos_zone_layout_t  zone_layouts[ZONE_MAX] = {
 
     {
-        .zone_id = ZONE_KERNEL,
-        .name = "kernel",
-        .size = ZONE_KERNEL_SIZE,
-        .page_array = (xos_page_t*)_kernel_page_array_start,
-        .page_array_end = (xos_page_t*)_kernel_page_array_end,
+        .zone_id = ZONE_DMA,
+        .name = "dma",
+        .page_array = NULL,
+        .page_array_end = NULL,
 
     },
     {
-        .zone_id = ZONE_DMA,
-        .name = "dma",
-        .size = ZONE_DMA_SIZE,
-        .page_array = (xos_page_t*)_dma_page_array_start,
-        .page_array_end = (xos_page_t*)_kernel_page_array_end,
+        .zone_id = ZONE_KERNEL,
+        .name = "kernel",
+        .page_array = NULL,
+        .page_array_end = NULL,
 
     },
     {
         .zone_id = ZONE_USER,
         .name = "user",
-        .size = ZONE_USER_SIZE,
-        .page_array = (xos_page_t*)_user_page_array_start,
-        .page_array_end = (xos_page_t*)_dma_page_array_end,
+        .page_array = NULL,
+        .page_array_end = NULL,
 
     },
 };
@@ -152,7 +134,7 @@ static void xos_zone_bind(xos_zone_t *zone,const xos_zone_layout_t *layout)
     zone->z_pfn_cnt = layout->size >> PAGE_SHIFT;
     zone->z_vm_cnt = zone->z_pfn_cnt;
     zone->z_vmempage = layout->page_array;
-    zone->free_pages = zone->z_pfn_cnt;
+    zone->free_pages = 0;
     zone->start_pfn = layout->start >> PAGE_SHIFT;
     zone->end_pfn = layout->end >> PAGE_SHIFT;
     xos_spinlock_init(&zone->slock);
@@ -205,6 +187,9 @@ static int xos_free_page_to_buddy(xos_zone_t *zone,xos_page_t *page,int order)
 
 //        free_area = zone->free_area + order;
         part_index = page_index ^(1 << order);  //使用异或算法找伙伴,异或交换律 0 1是伙伴 2 3 也是伙伴
+        if(part_index >= zone->z_pfn_cnt){
+            break;
+        }
         part_page = zone->z_vmempage + part_index;// 找到伙伴page
         /*
             判断part_page 是否空闲，伙伴是否，如果空闲可以向高阶合并,
@@ -242,6 +227,7 @@ static int xos_free_page_to_buddy(xos_zone_t *zone,xos_page_t *page,int order)
     */
     page->order = order;
     page->idle_flags = 0;
+    page->ref_cnt = 0;
     list_add_back(&page->list,&zone->free_area[order].free_list);
     zone->free_area[order].node_nfree++;  /*当前阶次空闲块数量加1 ，主要这里的node_free 统计的可不是页的数量*/
 
@@ -300,6 +286,7 @@ xos_page_t *xos_split_page(xos_zone_t *zone,xos_page_t *page,int cur_order,int h
         list_add_back(&tmp_page->list, &zone->free_area[high_order].free_list);
         zone->free_area[high_order].node_nfree++;
     }
+    page->idle_flags = 1;
     page->ref_cnt++;
     return page;
 }
@@ -337,6 +324,9 @@ xos_page_t *xos_get_page(xos_zone_t *zone,int order)
 int xos_insert_to_buddy(xos_zone_t *zone)
 {
     int32_t i = 0;
+    uint32_t page_index = 0;
+    uint32_t remain;
+    int order;
 //  int max_pfn_cnt;   
 
     xos_page_t* v_page_buf = zone->z_vmempage;
@@ -344,97 +334,163 @@ int xos_insert_to_buddy(xos_zone_t *zone)
     for (i = 0 ;i< MAX_ORDER; i++)
         list_init(&zone->free_area[i].free_list);
 
+    zone->free_pages = 0;
     /*
-        遍历每一个页帧，如果当前页帧空闲，将页帧加入buddy 子系统
+        初始化 buddy 时不能逐页调用 free 路径，否则低地址页合并后，
+        后续页还会再次插入 free list，造成重复释放和链表破坏。
+        这里按当前 index 对齐和剩余页数切成最大可用阶。
     */
-//  max_pfn_cnt = (zone->z_pfn_cnt < zone->z_vm_cnt)?zone->z_pfn_cnt:zone->z_vm_cnt;
-//    printk(PT_DEBUG,"zone->z_pfn_cnt=%d\n\r",zone->z_pfn_cnt);
-    for(i = 0; i < zone->z_pfn_cnt;i++){
-        /*
-            判断页是否空闲，如果页空闲则加入buddy 子系统
-            当前按照单个page 加入到Buddy子系统也就是加入到
-            zone->free_area[0].free_list 链表头中
+    while(page_index < zone->z_pfn_cnt){
+        remain = zone->z_pfn_cnt - page_index;
+        order = MAX_ORDER - 1;
 
-            还应当考虑当前释放的块是否有伙伴
-        */
-        if(v_page_buf[i].idle_flags == 0 || v_page_buf[i].order == -1){
-            xos_free_pages(zone,&v_page_buf[i],0);
+        while(order > 0){
+            if((remain >= (1U << order)) &&
+               ((page_index & ((1U << order) - 1)) == 0)){
+                break;
+            }
+            order--;
         }
 
+        v_page_buf[page_index].order = order;
+        v_page_buf[page_index].idle_flags = 0;
+        v_page_buf[page_index].ref_cnt = 0;
+        list_add_back(&v_page_buf[page_index].list,
+                      &zone->free_area[order].free_list);
+        zone->free_area[order].node_nfree++;
+        zone->free_pages += 1U << order;
+        page_index += 1U << order;
     }
     return 0;
 
 }
 
 
-
-static uint64 get_min(uint64 a,uint64 b)
+static uint64 xos_zone_desc_size(uint64 zone_size)
 {
-    return a < b ? a:b;
+    uint64 pages = zone_size >> PAGE_SHIFT;
+
+    return ALIGN_UP(pages * sizeof(xos_page_t), PAGE_SIZE);
 }
+
+static void xos_split_zone_pool(uint64 pool_size, uint64 *want_size)
+{
+    uint64 dma_size;
+    uint64 kernel_size;
+    uint64 user_size;
+
+    pool_size = ALIGN_DOWN(pool_size, BUDDY_ALIGN);
+    dma_size = ALIGN_DOWN(pool_size >> 5, BUDDY_ALIGN);
+    kernel_size = ALIGN_DOWN(((pool_size - dma_size) * 3) / 5, BUDDY_ALIGN);
+    user_size = ALIGN_DOWN(pool_size - dma_size - kernel_size, BUDDY_ALIGN);
+
+    want_size[ZONE_DMA] = dma_size;
+    want_size[ZONE_KERNEL] = kernel_size;
+    want_size[ZONE_USER] = user_size;
+}
+
 static int xos_set_zone_layouts(void)
 {
     xos_memblock_info_t *memblock = xos_memblock_get_info();
     uint64 usable_start;
     uint64 usable_end;
-    uint64 remaining_size;
+    uint64 usable_size;
+    uint64 zone_pool_size;
+    uint64 desc_total;
+    uint64 old_desc_total;
+    uint64 desc_start;
+    uint64 desc_cursor;
+    uint64 desc_size[ZONE_MAX];
     uint64 start;
-    uint64 default_size[ZONE_MAX];
-    uint64 total_desired_size;
-    uint64 tail_keep;
-    uint64 size;
+    uint64 want_size[ZONE_MAX];
     int i;
+    int iter;
+
     if(memblock == NULL || !memblock->vaild || memblock->usable.size == 0){
         return -1;
     }
-    usable_start = ALIGN_UP(memblock->usable.base,BUDDY_ALIGN);
+    usable_start = ALIGN_UP(memblock->usable.base,PAGE_SIZE);
     usable_end = ALIGN_DOWN(memblock->usable.base + memblock->usable.size,PAGE_SIZE);
     if(usable_end <= usable_start){
         return -1;
     }
-    remaining_size = usable_end - usable_start;
-    start = usable_start;
-    default_size[ZONE_KERNEL] = 256UL * 1024UL *1024UL;
-    default_size[ZONE_USER]   = 128UL * 1024UL *1024UL;
-    default_size[ZONE_DMA]    = 128UL * 1024UL *1024UL;
-    total_desired_size = default_size[ZONE_KERNEL] + default_size[ZONE_USER] + default_size[ZONE_DMA];
+    usable_size = usable_end - usable_start;
 
     for(i = 0; i < ZONE_MAX ;i++){
-        uint64 max_pages = xos_get_zone_page_counts(&zone_layouts[i]);
-        size = get_min(default_size[i],remaining_size);
-        if(remaining_size < total_desired_size){
-            if(i == ZONE_KERNEL){
-                size = remaining_size / 2;
-            }else if(i == ZONE_USER){
-                size = remaining_size - (remaining_size / 2);
-            }else{
-                size = 0;
-            }
+        zone_layouts[i].start = 0;
+        zone_layouts[i].end = 0;
+        zone_layouts[i].size = 0;
+        zone_layouts[i].page_array = NULL;
+        zone_layouts[i].page_array_end = NULL;
+    }
+
+    desc_total = 0;
+    zone_pool_size = usable_size;
+    for(iter = 0; iter < 8; iter++){
+        old_desc_total = desc_total;
+
+        if(usable_size <= old_desc_total){
+            return -1;
         }
-        if(i + 1 < ZONE_MAX){
-            tail_keep = (ZONE_MAX -i -1)*PAGE_SIZE;
-            if(remaining_size > tail_keep && size > (remaining_size - tail_keep)){
-                size = remaining_size - tail_keep;
-            }
+
+        zone_pool_size = usable_size - old_desc_total;
+        xos_split_zone_pool(zone_pool_size, want_size);
+
+        desc_total = 0;
+        for(i = 0; i < ZONE_MAX ;i++){
+            desc_size[i] = xos_zone_desc_size(want_size[i]);
+            desc_total += desc_size[i];
         }
-        size = ALIGN_DOWN(size,PAGE_SIZE);
-        if(size > (max_pages << PAGE_SHIFT)){
-            size = max_pages << PAGE_SHIFT;
-        }
-        zone_layouts[i].start = start;
-        zone_layouts[i].size = size;
-        if(size != 0){
-            zone_layouts[i].end = start + size -1;
-            start += size;
-            remaining_size -= size;
-        }else{
-            zone_layouts[i].end = start ?(start - 1):0;
+
+        if(desc_total == old_desc_total){
+            break;
         }
     }
-    g_zone_linear_map_start = zone_layouts[ZONE_KERNEL].start;
+
+    desc_total = ALIGN_UP(desc_total, PAGE_SIZE);
+    if(usable_size <= desc_total){
+        return -1;
+    }
+
+    desc_start = usable_start;
+    start = ALIGN_UP(desc_start + desc_total, BUDDY_ALIGN);
+    if(usable_end <= start){
+        return -1;
+    }
+
+    zone_pool_size = usable_end - start;
+    xos_split_zone_pool(zone_pool_size, want_size);
+
+    desc_total = 0;
+    for(i = 0; i < ZONE_MAX ;i++){
+        desc_size[i] = xos_zone_desc_size(want_size[i]);
+        desc_total += desc_size[i];
+    }
+
+    desc_cursor = desc_start;
+    for(i = 0; i < ZONE_MAX ;i++){
+        zone_layouts[i].page_array = (xos_page_t *)P2V(desc_cursor);
+        zone_layouts[i].page_array_end = (xos_page_t *)P2V(desc_cursor + desc_size[i]);
+        zone_layouts[i].start = start;
+        zone_layouts[i].size = want_size[i];
+        if(want_size[i] != 0){
+            zone_layouts[i].end = start + want_size[i] - 1;
+            start += want_size[i];
+        }else{
+            zone_layouts[i].end = start ? (start - 1) : 0;
+        }
+        desc_cursor += desc_size[i];
+    }
+
+    g_zone_linear_map_start = 0;
+    if(zone_layouts[ZONE_DMA].size != 0){
+        g_zone_linear_map_start = zone_layouts[ZONE_DMA].start;
+    }else if(zone_layouts[ZONE_KERNEL].size != 0){
+        g_zone_linear_map_start = zone_layouts[ZONE_KERNEL].start;
+    }
     
     for(i = ZONE_MAX -1 ;i >= 0; i--){
-        if(zone_layouts[i].size != 0){
+        if(i != ZONE_USER && zone_layouts[i].size != 0){
             g_zone_linear_map_end = zone_layouts[i].end;
             break;
         }
@@ -461,9 +517,9 @@ void zone_early_init(void)
     int i;
     xos_zone_t *zones[ZONE_MAX] = {
 
+        &zone_dma,
         &zone_normal,
         &zone_user,
-        &zone_dma,
     };
     if(!g_zone_layout_set_done){
         return ;
