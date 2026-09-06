@@ -182,6 +182,13 @@ int do_syscall_getppid(struct pt_regs *regs)
     return do_sys_getppid();
 }
 
+int do_syscall_execve(struct pt_regs *regs)
+{
+    const char *pathname = (const char *)regs->regs[0];
+    char *const *argv = (char *const *)regs->regs[1];
+    char *const *envp = (char *const *)regs->regs[2];
+    return do_sys_execve(pathname,argv,envp,regs);
+}
 
 sys_call_fun syscall_tabs[128] = {
         do_syscall_fork,

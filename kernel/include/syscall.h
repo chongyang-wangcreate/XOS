@@ -19,6 +19,7 @@ enum{
     NR_LSEEK,
     NR_CHMOD,
     NR_GETPID,
+    NR_EXECVE,
     NR_MAX
 
 };
@@ -31,7 +32,8 @@ int sys_call_entry(int sys_call_no,struct pt_regs *regs);
 extern int sys_nano_sleep(int seconds);
 extern int sys_mkdir(const char  *pathname, int mode);
 extern int  sys_mknod(const char *pathname,mode_t mode,devno_t dev);
-extern int do_sys_open(char *path_name,int flags, int mode);
+extern int do_sys_open(char *path_name,int flags, int mode)
+;
 extern ssize_t do_sys_read(int fd,void *buf,ssize_t count);
 extern ssize_t do_sys_write(int fd,void *buf,ssize_t count);
 extern int do_sys_getcwd(char *user_buf,int buf_size);
@@ -45,6 +47,8 @@ extern int do_sys_chmod(const char *path_name,int mode);
 extern int do_sys_getpid();
 extern int do_sys_getppid();
 extern int do_sys_gettgid();
+extern int do_sys_execve(const char *pathname,char *const argv[],char *const envp[],
+    struct pt_regs *regs);
 
 
 
