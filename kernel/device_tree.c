@@ -31,6 +31,9 @@ static void parse_node_prop(xos_dtb_node_t *node,const char *name,
                             const uint32 *data, uint32 len,
                             uint32 parent_addr_cells,uint32 parent_size_cells);
 
+static void collect_cpu_topology(void);
+static int  node_is_cpu(const xos_dtb_node_t *node);
+static int  parse_uint64_prop(const uint32 *data,uint32 len ,uint64 *val);                           
 static void parse_node_interrupts(xos_dtb_node_t *node,
                                 const uint32 *data ,uint32 len,
                                 uint32 interrupt_cells);                            
@@ -100,6 +103,7 @@ static int xos_parse_blob(xos_dtb_ctx_t *ctx)
         return -1;
     }
     g_dtb_info.total_size = fdt32_to_cpu(hdr->totalsize);
+    g_dtb_info.boot_cpuid_phys = fdt32_to_cpu(hdr->boot_cpuid_phys);
     if(g_dtb_info.total_size < sizeof(fdt_header_t)||
        g_dtb_info.total_size > (16*1024*1024UL)){
        return -1;
@@ -152,7 +156,7 @@ int xos_parse_dtb(void)
         if(token == FDT_END){
             break;
         }
-        if(token ==  FDT_BEGIN_NODE){
+        if(token == FDT_BEGIN_NODE){
             if(handle_begin_node(&dtb_ctx) < 0){
                 return -1;
             }
@@ -169,6 +173,7 @@ int xos_parse_dtb(void)
             continue;
         }
     }
+    collect_cpu_topology();
     g_dtb_info.valid = 1;
     return 0;
 }
@@ -677,10 +682,71 @@ static void parse_node_prop(xos_dtb_node_t *node,const char *name,
         node->interrupt_parent = fdt32_to_cpu(data[0]);
     }else if(str_eq(name,"interrupt-controller")){
         node->interrupt_controller = 1;
-    }else if(str_eq(name,"reg")){
+    }else if(str_eq(name,"enable-method")){
+        copy_fdt_string(node->enable_method,sizeof(node->enable_method),data,len);
+    }else if(str_eq(name,"cpu-release-addr")){
+        if(parse_uint64_prop(data,len,&node->cpu_release_addr) < 0){
+            node->cpu_release_addr = 0;
+        }
+    }
+    else if(str_eq(name,"reg")){
         parse_node_reg(node,data,len,parent_addr_cells,parent_size_cells);
     }
 }                            
+
+static int parse_uint64_prop(const uint32 *data ,uint32 len,uint64 *val)
+{
+    if(data == NULL || val == NULL){
+        return -1;
+    }
+    if(len >= sizeof(uint64)){
+        *val = fdt64_to_cpu(data);
+        return 0;
+    }
+    if(len >= sizeof(uint32)){
+        *val = fdt32_to_cpu(data[0]);
+        return 0;
+    }
+    return -1;
+}
+
+static int node_is_cpu(const xos_dtb_node_t *node)
+{
+    if(node == NULL || !node->enabled){
+        return 0;
+    }
+    if(node->level != 2){
+        return 0;
+    }
+    if(!compare_string(node->path,"/cpus/")){
+        return 0;
+    }
+    if(node->device_type[0] != '\0' && !str_eq(node->device_type,"cpu")){
+        return 0;
+    }
+    return compare_string(node->name,"cpu@");
+}
+static void collect_cpu_topology(void)
+{
+    int i;
+    g_dtb_info.cpu_count = 0;
+    for(i = 0; i < g_dtb_node_count && g_dtb_info.cpu_count < XOS_DTB_MAX_CPUS ;i++){
+        xos_dtb_node_t *node = &g_dtb_nodes[i];
+        xos_dtb_cpu_t *cpu;
+        if(!node_is_cpu(node)){
+            continue;
+        }
+        cpu = &g_dtb_info.cpus[g_dtb_info.cpu_count];
+        memset(cpu,0,sizeof(*cpu));
+        cpu->enable = 1;
+        if(node->nr_regs > 0){
+            cpu->mpidr = node->regs[0].start;
+        }
+        cpu->release_addr = node->cpu_release_addr;
+        strncpy(cpu->enable_method,node->enable_method,sizeof(cpu->enable_method) - 1);
+        g_dtb_info.cpu_count++;
+    }
+}
 
 static int add_dtb_node(xos_dtb_ctx_t *ctx,const char *node_name)
 {

@@ -33,8 +33,11 @@
 #include "task.h"
 #include "cpu_desc.h"
 #include "spinlock.h"
+#include "device_tree.h"
 
 cpu_desc_t cpu_array[CPU_NR];
+int g_cpu_possible_count = 1;
+int g_cpu_ready;
 
 /*
     0 比较特殊
@@ -63,12 +66,40 @@ char prio_table[128] = {
 
 void cpu_desc_init()
 {
-    int num = CPU_NR;
+    int default_num = CPU_NR;
+    int real_cpu_num;
     int prio_num;
     int i = 0;
+    int boot_cpuid = 0;
+    uint64 boot_mpidr = read_mpidr_el1();
+    xos_dtb_desc_t *dtb = xos_dtb_get_info();
     memset(cpu_array,0,sizeof(cpu_array));
-    for(; i < num;i++){
-        
+    g_cpu_ready = 0;
+    if(dtb != NULL && dtb->valid && dtb->cpu_count > 0){
+        real_cpu_num = dtb->cpu_count;
+        if(real_cpu_num > default_num){
+            real_cpu_num = default_num;
+        }
+    }
+    g_cpu_possible_count = real_cpu_num;
+    for(; i < real_cpu_num;i++){
+        cpu_array[i].cpuid = i;
+        cpu_array[i].possible = 1;
+        if(dtb != NULL && dtb->valid && i < dtb->cpu_count){
+            cpu_array[i].mpidr = dtb->cpus[i].mpidr & MPIDR_HWID_MASK;
+            cpu_array[i].release_addr = dtb->cpus[i].release_addr;
+            strncpy(cpu_array[i].enable_method,dtb->cpus[i].enable_method,
+            sizeof(cpu_array[i].enable_method) - 1);
+        }else{
+            cpu_array[i].mpidr = i;
+        }
+        /*
+            set boot cpu
+        */
+       if(cpu_array[i].mpidr == boot_mpidr){
+            cpu_array[i].boot_cpu = 1;
+            boot_cpuid = i;
+       }
         for(prio_num = 0;prio_num < PRIO_MAX;prio_num++){
             list_init(&cpu_array[i].runqueue[prio_num].run_list);
             list_init(&cpu_array[i].rt_runqueue[prio_num].run_list);
@@ -90,9 +121,6 @@ void cpu_desc_init()
         cpu_array[i].run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_runque_start);
         cpu_array[i].run_bitmap.btmp_bytes_len = 32;//32个bit
 
-        cpu_array[i].run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_waitque_start);
-        cpu_array[i].run_bitmap.btmp_bytes_len = 32;//32个bit
-
         cpu_array[i].wait_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_waitque_start);
         cpu_array[i].wait_bitmap.btmp_bytes_len = 32;
         cpu_array[i].run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_runque_start);
@@ -102,9 +130,61 @@ void cpu_desc_init()
         cpu_array[i].normal_run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_normal_runque_start);
         cpu_array[i].normal_run_bitmap.btmp_bytes_len = 32;
     }
+    if(xos_mpidr_to_cpuid(boot_mpidr) < 0){
+        cpu_array[0].mpidr = boot_mpidr;
+        cpu_array[0].boot_cpu = 1;
+        boot_cpuid = 0;
+    }
+    cpu_array[boot_cpuid].cpu_online = 1;
+    g_cpu_ready = 1;
     
 }
 
+int xos_mpidr_to_cpuid(u64 mpidr)
+{
+    int i;
+
+    mpidr &= MPIDR_HWID_MASK;
+    if(!g_cpu_ready){
+        return (mpidr & 0xff) == 0 ? 0 : -1;
+    }
+    for(i = 0; i < g_cpu_possible_count; i++){
+        if(cpu_array[i].possible && cpu_array[i].mpidr == mpidr){
+            return i;
+        }
+    }
+    return -1;
+}
+
+u64 xos_cpuid_to_mpidr(int cpuid)
+{
+    if(cpuid < 0 || cpuid >= g_cpu_possible_count || !cpu_array[cpuid].possible){
+        return 0;
+    }
+    return cpu_array[cpuid].mpidr;
+}
+
+int xos_cpu_possible_count(void)
+{
+    return g_cpu_possible_count;
+}
+
+void asm_secondary_entry(u64 mpidr)
+{
+    int cpuid;
+
+    mpidr &= MPIDR_HWID_MASK;
+    cpuid = xos_mpidr_to_cpuid(mpidr);
+    if(cpuid >= 0 && cpuid < CPU_NR){
+        cpu_array[cpuid].cpu_online = 1;
+        printk(PT_WARRING,"cpu%d secondary parked mpidr=0x%lx\n\r",cpuid,mpidr);
+    }else{
+        printk(PT_WARRING,"unknown secondary parked mpidr=0x%lx\n\r",mpidr);
+    }
+    while(1){
+        asm volatile("wfe" ::: "memory");
+    }
+}
 
 
 int _get_hp_task(uint64 map_val)
@@ -123,7 +203,7 @@ void find_hp_task(){
 }
 
 void task_set_bit(uint64 task_prio_map, uint64 bit_index) {
-//    uint64 index = bit_index / 64;
+//  uint64 index = bit_index / 64;
     uint64 offset = bit_index % 64;
     task_prio_map |= (1ULL << offset);
 }

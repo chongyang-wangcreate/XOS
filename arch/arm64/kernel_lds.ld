@@ -11,6 +11,8 @@ PAGE_TABLE_RAM_SIZE = 0x2000000;
 KERNEL_SECTION_GUARD_SIZE = 0x1000;
 USER_SECTION_GUARD_SIZE = 0x1000;
 IMAGE_TAIL_GUARD_SIZE = 0x200000;
+NR_CPUS = 4;
+CPU_BOOT_STACK_SIZE = 0x4000;
 
 /* 用户空间参数 */
 USER_VADDR_START = 0x08048000;
@@ -93,6 +95,11 @@ SECTIONS {
         . = ALIGN(16);
         . += MAIN_STACK_SIZE;
         PROVIDE(main_stack_top = .);
+
+        . = ALIGN(4096);
+        PROVIDE(_percpu_boot_stack_start = .);
+        . += NR_CPUS * CPU_BOOT_STACK_SIZE;
+        PROVIDE(_percpu_boot_stack_end = .);
 
         /* 页表 */
         . = ALIGN(4096);

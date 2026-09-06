@@ -61,7 +61,7 @@
 #include "uart.h"
 #include "device_tree.h"
 #include "memblock.h"
-
+#include "psci.h"
 /********************************************************************************************
 
     2024：3.3    当前版本只考虑支持单核，多核心需要考虑的问题比较多，实现基本功能之后，再扩展支持多核
@@ -201,6 +201,7 @@ void kernel_init (uint64 dtb_phys)
     list_init(&task_global_list);
     list_init(&pend_global_list);
     cpu_desc_init();
+    xos_boot_secondary_cpus();
     /*
         已引入128优先级
         后续实现多种调度策略，当前是实现越简单越好

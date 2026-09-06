@@ -8,6 +8,7 @@
 #define XOS_DTB_MAX_REGS   4
 #define XOS_DTB_MAX_IRQS   8
 #define XOS_DTB_IRQ_CELLS  4
+#define XOS_DTB_MAX_CPUS   8
 
 #define FDT_DEFAULT_ADDR_CELLS 2
 #define FDT_DEFAULT_SIZE_CELLS 2
@@ -35,6 +36,13 @@ typedef struct xos_dtb_irq{
 
 }xos_dtb_irq_t;
 
+typedef struct xos_dtb_cpu{
+    uint64 mpidr;
+    uint64 release_addr;
+    char enable_method[16];
+    int  enable;
+
+}xos_dtb_cpu_t;
 
 typedef struct xos_dtb_desc{
 
@@ -46,6 +54,9 @@ typedef struct xos_dtb_desc{
     uint32 size_cells;
     uint64 mem_start;
     uint64 mem_size;
+    uint32 boot_cpuid_phys;
+    uint32 cpu_count;
+    xos_dtb_cpu_t cpus[XOS_DTB_MAX_CPUS];
     char   model[64];
     char   bootrags[128];
     char   source[16];
@@ -64,6 +75,8 @@ typedef struct xos_dtb_node{
     uint32 phandle;
     uint32 interrupt_parent;
     uint32 interrupt_controller;
+    uint64 cpu_release_addr;
+    char   enable_method[16];
     xos_dbt_reg_t regs[XOS_DTB_MAX_REGS];
     uint32 nr_regs;
     xos_dtb_irq_t irqs[XOS_DTB_MAX_IRQS];

@@ -3,11 +3,13 @@
 
 .equ VA_KERNEL_START,       0xFFFFFF8000000000
 .equ PHYS_MEM_START,        0x40000000
-.equ BOOR_EARLY_MAP_END,     0x60000000
+.equ BOOR_EARLY_MAP_END,    0x60000000
 .equ DEVICE_MEM_START,      0x08000000      /* 注意：应该是0x08000000，不是0x09000000 */
 .equ DEVICE_MEM_END,        0x3FFFFFFF
 .equ UART0_PHYS,            0x09000000
 .equ PAGESIZE,              4096
+.equ CPU_BOOT_STACK_SIZE,   0x4000
+.equ MPIDR_MASK    ,   0xff
 
 /* 页表项标志位 */
 .equ L1_SHIFT,               30
@@ -130,9 +132,9 @@
 _start:
     mov x20, x0
     mrs x1, mpidr_el1
-    and x1, x1, #0xff
+    and x1, x1, #MPIDR_MASK
     cbz x1, primary_start
-    b secondary_entry
+    b secondary_boot_wait
 
 primary_start:
     enable_fp
@@ -144,28 +146,45 @@ primary_start:
     ldr x1, =p_entry_virt
     br x1
 
+secondary_boot_wait:
+    wfe 
+    b secondary_boot_wait
+
+
+.global secondary_entry
 secondary_entry:
+    mov x20,x0
+    enable_fp
     set_mmu_regs
     enable_mmu
 
-    ldr x1, =p_entry_virt
+    ldr x1, =secondary_entry_virt
     br x1
 
 .section ".text"
 .global p_entry_virt
 p_entry_virt:
     enable_fp
-    mrs x0, mpidr_el1
-    and x0, x0, #0xff
-    add x0, x0, #1
-    mov x1, #PAGESIZE
-    mul x0, x0, x1
     ldr x2, =main_stack_top
-    sub x2, x2, x0
     mov sp, x2
     mov x0, x20
     bl boot_main
 
+
+.global secondary_entry_virt
+secondary_entry_virt:
+    enable_fp
+    mrs x0, mpidr_el1
+    and x0, x0, #MPIDR_MASK
+    mov x1, #CPU_BOOT_STACK_SIZE
+    mul x2, x0, x1
+    add x2, x2, x1   //point to the top of the stack
+    ldr x3, =_percpu_boot_stack_start
+    add x3, x3, x2
+    mov sp, x3
+    mrs x0, mpidr_el1
+    bl  asm_secondary_entry
+    b hang
 
 .global set_virt_stack
 set_virt_stack:

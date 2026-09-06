@@ -4,12 +4,42 @@
 #include "bit_map.h"
 #include "spinlock.h"
 
+
+/*
+    [23:16]‌	‌Aff3‌	‌第三级亲和性层级‌。
+    通常用于标识 ‌Cluster（集群）‌ 或 ‌Socket（插槽）‌ 的更高层级分组。具体含义取决于 SoC 的实现。
+    ‌[15:8]‌	‌Aff2‌	‌第二级亲和性层级‌。
+    通常用于标识 ‌Cluster（集群）‌。例如，在多核 SoC 中，同一集群内的核心具有相同的 Aff2 值。
+    ‌[7:0]‌	‌Aff1‌	‌第一级亲和性层级‌。
+    通常用于标识 ‌Core（核心）‌ 在集群内的编号，或者在某些简单实现中直接标识核心 ID。
+
+*/
 #define CPU_NR         4
 
-static inline u64 cur_cpuid() {
+//#define MPIDR_MASK 0xff
+
+#define MPIDR_HWID_MASK 0xff00ffffffUL
+
+extern int xos_mpidr_to_cpuid(u64 mpidr);
+extern u64 xos_cpuid_to_mpidr(int cpuid);
+extern int xos_cpu_possible_count(void);
+extern void asm_secondary_entry(u64 mpidr);
+extern int xos_cpu_possible_count(void);
+
+
+
+static inline u64 read_mpidr_el1() {
   u64 mpidr;
   asm volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
-  return mpidr & 0xff;
+  return mpidr & MPIDR_HWID_MASK;
+}
+
+static inline u64 cur_cpuid(){
+    int cpuid = xos_mpidr_to_cpuid(read_mpidr_el1());
+    if(cpuid >= 0){
+        return cpuid;
+    }
+    return read_mpidr_el1() & 0xff;
 }
 
 
@@ -68,6 +98,12 @@ typedef struct wait_queue{
 }wait_queue_t;
 typedef struct struct_cpu_desc{
     int cpuid;
+    uint64 mpidr;
+    uint64 release_addr;  //spin table mode
+    int possible;
+    int cpu_online;
+    int boot_cpu;
+    char enable_method[16];
     int bind_nr; //当前核绑定数量
     int cur_pid;
     struct task_struct *cur_task;

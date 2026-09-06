@@ -98,6 +98,7 @@ ARM64_OBJS = \
     arch/arm64/arch64_mmu.o\
     arch/arm64/exce.o\
     arch/arm64/boot_mem.o\
+    arch/arm64/psci.o\
 	arch/arm64/gic-v3.o
 
 LIB_OBJS = \
