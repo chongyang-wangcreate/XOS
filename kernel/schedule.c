@@ -611,7 +611,6 @@ void load_first_task()
  //   printk(PT_DEBUG,"%s:%d,tsk->prio=%d\n\r",__func__,__LINE__,tsk->prio);
 
     cpu_array[cpuid].cur_task = tsk;
-    xos_sti();
     load_task(tsk);
 }
 

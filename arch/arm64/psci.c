@@ -7,7 +7,7 @@
 #include "cpu_desc.h"
 #include "psci.h"
 
-extern int xos_cpu_possible_count(void);
+
 extern void secondary_entry(void);
 
 #define PSCI_0_2_FN64_CPU_ON  0xc4000003UL

@@ -24,7 +24,7 @@ extern int xos_mpidr_to_cpuid(u64 mpidr);
 extern u64 xos_cpuid_to_mpidr(int cpuid);
 extern int xos_cpu_possible_count(void);
 extern void asm_secondary_entry(u64 mpidr);
-extern int xos_cpu_possible_count(void);
+
 
 
 
