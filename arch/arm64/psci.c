@@ -6,6 +6,9 @@
 #include "list.h"
 #include "cpu_desc.h"
 #include "psci.h"
+#include "barriers.h"
+
+#define CPU_ONLINE_WAIT_LOOPS 10000000UL
 
 
 extern void secondary_entry(void);
@@ -29,9 +32,11 @@ static long psci_cpu_on(uint64 target_mpidr,
     return (long)x0;   // 返回值：0 表示成功，负数表示错误码
 }
 
+
 int xos_boot_secondary_cpus(void)
 {
     int i;
+    unsigned long wait;
     long ret;
     int possible = xos_cpu_possible_count();
     uint64 boot_entry = (uint64)secondary_entry - VA_KERNEL_START;
@@ -43,10 +48,10 @@ int xos_boot_secondary_cpus(void)
         if (!cpu_array[i].possible ||  cpu_array[i].boot_cpu || cpu_array[i].cpu_online){
             continue;
         }
-        psci_cpu_on(cpu_array[i].mpidr ,boot_entry,0);
         if (strcmp(cpu_array[i].enable_method, "psci") == 0) {
             ret = psci_cpu_on(cpu_array[i].mpidr ,boot_entry,0);
             if (ret != 0) {
+                printk(PT_ERROR,"psci cpu_on cpu%d failed ret=%ld\n\r",i,ret);
                 continue;
             }
         } else if (strcmp(cpu_array[i].enable_method, "spin-table") == 0) {
@@ -57,11 +62,20 @@ int xos_boot_secondary_cpus(void)
         } else {
             continue;
         }
-        
+
+        for(wait = 0; wait < CPU_ONLINE_WAIT_LOOPS; wait++){
+            if(*(volatile int *)&cpu_array[i].cpu_online){
+                dmb(ish);
+                break;
+            }
+            asm volatile("yield" ::: "memory");
+        }
+        if(wait == CPU_ONLINE_WAIT_LOOPS){
+            printk(PT_ERROR,"cpu%d online timeout\n\r",i);
+        }
     }    
 
     
     return 0;
 
 }
-

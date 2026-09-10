@@ -2,6 +2,7 @@
 #define __CPU_H__
 
 #include "bit_map.h"
+#include "list.h"
 #include "spinlock.h"
 
 
@@ -20,11 +21,18 @@
 
 #define MPIDR_HWID_MASK 0xff00ffffffUL
 
+typedef void (*xos_smp_call_func_t)(void *arg);
+
 extern int xos_mpidr_to_cpuid(u64 mpidr);
 extern u64 xos_cpuid_to_mpidr(int cpuid);
 extern int xos_cpu_possible_count(void);
+extern void xos_cpu_mark_online(int cpuid);
 extern void asm_secondary_entry(u64 mpidr);
 
+
+extern void secondary_cpu_percpu_init(void);
+extern void xos_smp_init(void);
+extern void xos_smp_send_reschedule(int cpuid);
 
 
 
@@ -108,6 +116,11 @@ typedef struct struct_cpu_desc{
     int cur_pid;
     struct task_struct *cur_task;
     struct task_struct *idle_task;
+    xos_smp_call_func_t smp_call_func;
+    void *smp_call_arg;
+    volatile int smp_call_pending;
+    volatile int smp_reschedule_pending;
+    xos_spinlock_t smp_call_lock;
 //    prio_bitmap bitmap;
     bitmap_t run_bitmap;
     runque_t runqueue[PRIO_MAX];

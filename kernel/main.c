@@ -132,7 +132,6 @@ void kernel_thread2(char *array)
 
 void start_init(char *array)
 {
-
 #ifndef CONFIG_VFS
     xos_vfs_init();
     xos_mount_fs();
@@ -146,7 +145,6 @@ void start_init(char *array)
 #ifndef CONFIG_DEV
      xos_init_deivices(); 
 #endif
-
     process_create();
     while(1)
     {
@@ -162,6 +160,7 @@ void xos_set_vector_entry()
     val64 = (uint64)&exce_vectors;
     asm("msr vbar_el1, %[v]": :[v]"r" (val64):);
 }
+
 void kernel_init (uint64 dtb_phys)
 {
     clear_kbss();
@@ -201,13 +200,14 @@ void kernel_init (uint64 dtb_phys)
     list_init(&task_global_list);
     list_init(&pend_global_list);
     cpu_desc_init();
-    xos_boot_secondary_cpus();
+    xos_smp_init();
     /*
         已引入128优先级
         后续实现多种调度策略，当前是实现越简单越好
     */
     xos_thread_create(5, (unsigned long)&kernel_idle, 6);
     xos_thread_create(2, (unsigned long)&start_init, 6);
+    xos_boot_secondary_cpus();
     xos_uart_puts("Hello from kernel_init 6\n");
     xos_cli();
     load_proc_flags = 1;
@@ -217,3 +217,4 @@ void kernel_init (uint64 dtb_phys)
         wfi();
     }
 }
+

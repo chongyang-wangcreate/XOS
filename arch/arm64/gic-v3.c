@@ -10,9 +10,7 @@
 #include "printk.h"
 #include "error.h"
 #include "mem_layout.h"
-
-
-#define NR_CPUS 1
+#include "cpu_desc.h"
 
 #define GIC_DIST_BASE_ADDR  0x08000000
 #define GIC_RD_BASE_ADDR    0x080A0000
@@ -130,7 +128,7 @@ struct redist_region
 struct gic_chip_data
 {
 	void __iomem *dist_base;
-	struct redist_region redist_regions[NR_CPUS];
+	struct redist_region redist_regions[CPU_NR];
 	u32 nr_redist_regions;
 	unsigned int irq_nr;
 };
@@ -548,6 +546,38 @@ static void gic_cpu_init(void)
 	gic_cpu_sys_reg_init();
 }
 
+void gicv3_init_percpu(void)
+{
+	gic_cpu_init();
+}
+
+
+int gicv3_send_sgi(int cpuid, u32 sgi_id)
+{
+       u64 mpidr;
+       u64 aff0;
+       u64 sgi1r;
+
+       if(cpuid < 0 || cpuid >= xos_cpu_possible_count() || sgi_id >= 16){
+               return -EINVAL;
+       }
+
+       mpidr = xos_cpuid_to_mpidr(cpuid);
+       aff0 = MPIDR_AFFINITY_LEVEL(mpidr, 0);
+       sgi1r = MPIDR_AFFINITY_LEVEL(mpidr, 3) << ICC_SGI1R_AFFINITY_3_SHIFT;
+       sgi1r |= MPIDR_AFFINITY_LEVEL(mpidr, 2) << ICC_SGI1R_AFFINITY_2_SHIFT;
+       sgi1r |= MPIDR_AFFINITY_LEVEL(mpidr, 1) << ICC_SGI1R_AFFINITY_1_SHIFT;
+       sgi1r |= (aff0 >> 4) << ICC_SGI1R_RS_SHIFT;
+       sgi1r |= (u64)sgi_id << ICC_SGI1R_SGI_ID_SHIFT;
+       sgi1r |= 1ULL << (aff0 & 0xf);
+
+       dsb(ishst);
+       gic_write_sgi1r(sgi1r);
+       isb();
+       return 0;
+}
+
+
 int gic_init_bases(void __iomem *dist_base,
 				   void __iomem *rdist_base,
 				   u32 nr_redist_regions)
@@ -595,9 +625,8 @@ int gic_init_bases(void __iomem *dist_base,
 
 int gic_init(void)
 {
-
     gic_init_bases((void *)P2V(GIC_DIST_BASE_ADDR),(void *)P2V(GIC_RD_BASE_ADDR),
-                NR_CPUS);
+                CPU_NR);
 
     return 0;
 }

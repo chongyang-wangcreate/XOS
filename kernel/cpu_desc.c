@@ -27,17 +27,77 @@
 #include "phy_mem.h"
 #include "printk.h"
 #include "gic-v3.h"
+#include "interrupt.h"
 #include "tick_timer.h"
+#include "arch64_timer.h"
 #include "xos_mutex.h"
 #include "fs.h"
 #include "task.h"
+#include "schedule.h"
 #include "cpu_desc.h"
 #include "spinlock.h"
 #include "device_tree.h"
+#include "arch64_irq.h"
+#include "barriers.h"
+#include "error.h"
 
 cpu_desc_t cpu_array[CPU_NR];
 int g_cpu_possible_count = 1;
 int g_cpu_ready;
+
+#define XOS_RESCHEDULE_IPI 1
+
+extern void xos_set_vector_entry(void);
+
+static void xos_reschedule_ipi(void *desc)
+{
+    struct task_struct *task = get_current_task();
+    int cpuid = (int)cur_cpuid();
+    int need_reschedule = 0;
+
+    if(cpuid >= 0 && cpuid < CPU_NR){
+        if(cpu_array[cpuid].smp_call_pending){
+            xos_smp_call_func_t func;
+            void *arg;
+
+            xos_spinlock(&cpu_array[cpuid].smp_call_lock);
+            func = cpu_array[cpuid].smp_call_func;
+            arg = cpu_array[cpuid].smp_call_arg;
+            cpu_array[cpuid].smp_call_pending = 0;
+            xos_unspinlock(&cpu_array[cpuid].smp_call_lock);
+            if(func != NULL){
+                func(arg);
+            }
+        }
+        if(cpu_array[cpuid].smp_reschedule_pending){
+            cpu_array[cpuid].smp_reschedule_pending = 0;
+            need_reschedule = 1;
+        }
+    }
+    if(need_reschedule && task != NULL){
+        task->need_switch = 1;
+    }
+}
+
+void xos_smp_init(void)
+{
+    request_irq(XOS_RESCHEDULE_IPI, xos_reschedule_ipi, 0,
+                "reschedule-ipi", NULL);
+}
+
+void xos_smp_send_reschedule(int cpuid)
+{
+    if(cpuid < 0 || cpuid >= g_cpu_possible_count){
+        return;
+    }
+    if(!cpu_array[cpuid].cpu_online || cpuid == (int)cur_cpuid()){
+        return;
+    }
+    cpu_array[cpuid].smp_reschedule_pending = 1;
+    dmb(ish);
+    gicv3_send_sgi(cpuid, XOS_RESCHEDULE_IPI);
+}
+
 
 /*
     0 比较特殊
@@ -113,6 +173,7 @@ void cpu_desc_init()
         }
         list_init(&cpu_array[i].timer_list_head);
         xos_spinlock_init(&cpu_array[i].lock);
+        xos_spinlock_init(&cpu_array[i].smp_call_lock);
         cpu_array[i].bitmap_runque_start = 0;
         cpu_array[i].bitmap_rt_runque_start = 0;
         cpu_array[i].bitmap_normal_runque_start = 0;
@@ -135,10 +196,32 @@ void cpu_desc_init()
         cpu_array[0].boot_cpu = 1;
         boot_cpuid = 0;
     }
-    cpu_array[boot_cpuid].cpu_online = 1;
     g_cpu_ready = 1;
+    xos_cpu_mark_online(boot_cpuid);
     
 }
+
+
+void xos_cpu_mark_online(int cpuid)
+{
+    if(cpuid < 0 || cpuid >= CPU_NR || !cpu_array[cpuid].possible){
+        return;
+    }
+    cpu_array[cpuid].cpu_online = 1;
+    dmb(ish);
+    sev();
+}
+
+void xos_cpu_mark_failed(int cpuid)
+{
+    if(cpuid < 0 || cpuid >= CPU_NR || !cpu_array[cpuid].possible){
+        return;
+    }
+    cpu_array[cpuid].cpu_online = 0;
+    dmb(ish);
+    sev();
+}
+
 
 int xos_mpidr_to_cpuid(u64 mpidr)
 {
@@ -169,6 +252,20 @@ int xos_cpu_possible_count(void)
     return g_cpu_possible_count;
 }
 
+void secondary_cpu_percpu_init(void)
+{
+    xos_set_vector_entry();
+    gicv3_init_percpu();
+    xos_timer_init_percpu();
+}
+
+static void secondary_idle_task(void *arg)
+{
+    while(1){
+        asm volatile("wfi" ::: "memory");
+    }
+}
+
 void asm_secondary_entry(u64 mpidr)
 {
     int cpuid;
@@ -176,8 +273,16 @@ void asm_secondary_entry(u64 mpidr)
     mpidr &= MPIDR_HWID_MASK;
     cpuid = xos_mpidr_to_cpuid(mpidr);
     if(cpuid >= 0 && cpuid < CPU_NR){
-        cpu_array[cpuid].cpu_online = 1;
-        printk(PT_WARRING,"cpu%d secondary parked mpidr=0x%lx\n\r",cpuid,mpidr);
+        printk(PT_WARRING,"cpu%d secondary init mpidr=0x%lx\n\r",cpuid,mpidr);
+        secondary_cpu_percpu_init();
+        if(xos_idle_thread_create((unsigned long)secondary_idle_task, 0) == 0){
+            xos_cpu_mark_online(cpuid);
+            printk(PT_WARRING,"cpu%d idle task ready\n\r",cpuid);
+            load_first_task();
+        }else{
+            xos_cpu_mark_failed(cpuid);
+            printk(PT_ERROR,"cpu%d idle task creation failed\n\r",cpuid);
+        }
     }else{
         printk(PT_WARRING,"unknown secondary parked mpidr=0x%lx\n\r",mpidr);
     }

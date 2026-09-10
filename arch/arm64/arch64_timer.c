@@ -100,6 +100,11 @@ static inline uint64_t arch_timer_frequecy(void)
     return (rate != 0) ? rate : 1000000;
 }
 
+void xos_timer_init_percpu(void)
+{
+    arch64_timer_start();
+}
+
 /*
     将kernel_ticks 操作方法timer_isr 具体的中断处理函数中来处理
 
@@ -133,6 +138,7 @@ void timer_isr(void *desc)
     period = arch_timer_frequecy() / 100;
     WRITE_REG(period,CNTP_TVAL_EL);
 }
+
 
 int  arch64_timer_init(uint64 freq_value)
 {

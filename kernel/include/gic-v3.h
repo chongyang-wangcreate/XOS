@@ -23,6 +23,8 @@ extern u64 gic_read_iar(void);
 
 extern void gic_eoi_irq(u32 hwirq);
 
+extern int gicv3_send_sgi(int cpuid, u32 sgi_id);
+
 extern void xos_irq_init();
 
 
