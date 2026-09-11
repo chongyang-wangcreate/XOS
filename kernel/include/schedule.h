@@ -46,6 +46,16 @@ extern void schedule(void);
 extern void int_schedule(void);
 extern void load_first_task();
 extern void handle_task_timerslice(int cpuid);
+extern int sched_select_cpu(int preferred_cpuid);
+extern int sched_select_task_cpu(const struct task_struct *task,
+                                 int preferred_cpuid);
+extern int sched_balance_idle_cpu(int cpuid);
+extern int sched_periodic_balance(void);
+extern int sched_migrate_ready_task(struct task_struct *task, int dst_cpuid);
+extern int sched_set_task_affinity(struct task_struct *task, uint64 cpu_mask);
+extern void sched_migrate_disable(void);
+extern void sched_migrate_enable(void);
+
 extern struct task_struct *get_current_task(void);
 extern struct pt_regs * get_task_pt_regs_new(char* stack);
 extern int wake_up_proc(struct task_struct *tsk);

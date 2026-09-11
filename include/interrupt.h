@@ -155,8 +155,8 @@ static inline unsigned int irq_desc_get_irq(struct irq_desc *desc)
 void xos_irq_entry(struct pt_regs *regs);
 
 
-int request_irq(unsigned int irq, irq_handler_t handler, unsigned long flags,
-                const char *name, void *data);
+extern int request_irq(unsigned int irq, irq_handler_t handler,
+                       unsigned long flags, const char *name, void *data);
 
 int is_interrupt_nest(void);
 extern void irq_enter();

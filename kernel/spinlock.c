@@ -125,25 +125,34 @@ void arch_spin_unlock(xos_spinlock_t *lock) {
 
 void xos_spinlock(xos_spinlock_t *lock)
 {
-    
-    unsigned long flags;
     preempt_disable();
-    flags = arch_local_irq_save();
     arch_spin_lock(lock);
-    arch_local_irq_restore(flags);
-    
 }
 
 
 void xos_unspinlock(xos_spinlock_t *lock)
 {
-    
+    arch_spin_unlock(lock);
+    preempt_enable();
+}
+
+unsigned long xos_spin_lock_irqsave(xos_spinlock_t *lock)
+{
     unsigned long flags;
+
+    preempt_disable();
     flags = arch_local_irq_save();
+    arch_spin_lock(lock);
+    return flags;
+}
+
+void xos_spin_unlock_irqrestore(xos_spinlock_t *lock, unsigned long flags)
+{
     arch_spin_unlock(lock);
     arch_local_irq_restore(flags);
     preempt_enable();
 }
+
 
 
 void xos_spinlock_init(xos_spinlock_t *lock)

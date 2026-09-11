@@ -185,8 +185,8 @@ int xos_add_timer(xos_timer_t *timer){
 
     xos_timer_t *tmp;
     dlist_t *tmp_list;
-    arch_local_irq_disable();
-    xos_spinlock(&cpu_array[cur_cpuid()].lock);
+    unsigned long flags;
+    flags = xos_spin_lock_irqsave(&cpu_array[cur_cpuid()].lock);
     dlist_t *l_timer_list_head = &cpu_array[cur_cpuid()].timer_list_head;
     if (list_is_empty(l_timer_list_head)) { 
 
@@ -216,8 +216,7 @@ int xos_add_timer(xos_timer_t *timer){
            }
             
         }
-    xos_unspinlock(&cpu_array[cur_cpuid()].lock);
-    arch_local_irq_enable();
+    xos_spin_unlock_irqrestore(&cpu_array[cur_cpuid()].lock, flags);
     return 0;
 }        
 
@@ -247,23 +246,30 @@ void xos_timer_out_reg(xos_timer_t *timer,timer_fun  t_fun,void *arg)
 void xos_check_timer()
 {
     xos_timer_t *tmp;
-    dlist_t *tmp_list;
-    xos_spinlock(&cpu_array[cur_cpuid()].lock);
     dlist_t *l_timer_list_head = &cpu_array[cur_cpuid()].timer_list_head;
 
-    while(list_is_empty(l_timer_list_head) != 1){
-        tmp_list = l_timer_list_head->next;
-        tmp = list_entry(tmp_list, xos_timer_t, t_list);
+    while(1){
+        unsigned long flags =
+            xos_spin_lock_irqsave(&cpu_array[cur_cpuid()].lock);
+        if(list_is_empty(l_timer_list_head)){
+            xos_spin_unlock_irqrestore(&cpu_array[cur_cpuid()].lock, flags);
+            break;
+        }
+
+        tmp = list_entry(l_timer_list_head->next, xos_timer_t, t_list);
         if(tmp->time_out > kernel_ticks){
+            xos_spin_unlock_irqrestore(&cpu_array[cur_cpuid()].lock, flags);
             break;
         }
 
         list_del(&tmp->t_list);
+        xos_spin_unlock_irqrestore(&cpu_array[cur_cpuid()].lock, flags);
         xos_timer_out_dispatch(tmp);
     }
-    xos_unspinlock(&cpu_array[cur_cpuid()].lock);
     return;
 
+#if 0
+    dlist_t *tmp_list;
     list_for_each(tmp_list,l_timer_list_head){
         tmp = list_entry(tmp_list,xos_timer_t,t_list);
         if(tmp->time_out > kernel_ticks){
@@ -280,4 +286,5 @@ void xos_check_timer()
         */
     }
     xos_unspinlock(&cpu_array[cur_cpuid()].lock);
+#endif
 }

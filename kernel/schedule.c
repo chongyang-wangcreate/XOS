@@ -35,6 +35,7 @@
 #include "mmu.h"
 #include "mem_layout.h"
 #include "arch64_irq.h"
+#include "barriers.h"
 
 
 xos_spinlock_t  g_wakeup_lock = {0};
@@ -253,10 +254,402 @@ static const sched_class_t *xos_sched_class_root = &xos_rt_sched_class;
 
 static cpu_desc_t *sched_cpu_rq(int cpuid)
 {
-    if(cpuid < 0 || cpuid >= CPU_NR){
+    if(cpuid < 0 || cpuid >= CPU_NR || !cpu_array[cpuid].possible){
         return NULL;
     }
     return &cpu_array[cpuid];
+}
+
+static int sched_rq_load(cpu_desc_t *rq)
+{
+    int load = 0;
+    int prio;
+
+    if(rq == NULL){
+        return 0;
+    }
+
+    for(prio = 0; prio < PRIO_MAX; prio++){
+        load += rq->rt_run_count[prio];
+        load += rq->run_count[prio];
+    }
+    return load;
+}
+
+static int sched_balance_pair(int src_cpuid, int dst_cpuid);
+
+static uint64 sched_online_cpu_mask(void)
+{
+    uint64 mask = 0;
+    int cpuid;
+
+    for(cpuid = 0; cpuid < xos_cpu_possible_count(); cpuid++){
+        if(cpu_array[cpuid].possible && cpu_array[cpuid].cpu_online){
+            mask |= 1ULL << cpuid;
+        }
+    }
+    return mask;
+}
+
+static int sched_task_cpu_allowed(const struct task_struct *task, int cpuid)
+{
+    uint64 allowed;
+
+    if(task == NULL || cpuid < 0 || cpuid >= CPU_NR){
+        return 0;
+    }
+    allowed = task->cpus_allowed;
+    if(allowed == 0){
+        allowed = sched_online_cpu_mask();
+    }
+    return (allowed & (1ULL << cpuid)) != 0;
+}
+
+int sched_select_cpu(int preferred_cpuid)
+{
+    int best_cpu = -1;
+    int best_load = 0x7fffffff;
+    int possible = xos_cpu_possible_count();
+    int cpuid;
+
+    if(preferred_cpuid >= 0 && preferred_cpuid < possible &&
+       cpu_array[preferred_cpuid].possible &&
+       cpu_array[preferred_cpuid].cpu_online){
+        best_cpu = preferred_cpuid;
+    }
+
+    for(cpuid = 0; cpuid < possible; cpuid++){
+        cpu_desc_t *rq;
+        int load;
+
+        if(!cpu_array[cpuid].possible || !cpu_array[cpuid].cpu_online){
+            continue;
+        }
+
+        rq = &cpu_array[cpuid];
+        xos_spinlock(&rq->lock);
+        load = sched_rq_load(rq);
+        xos_unspinlock(&rq->lock);
+
+        if(load < best_load ||
+           (load == best_load && cpuid == preferred_cpuid)){
+            best_cpu = cpuid;
+            best_load = load;
+        }
+    }
+    return best_cpu;
+}
+
+static int sched_cpu_load(int cpuid)
+{
+    cpu_desc_t *rq;
+    int load;
+
+    rq = sched_cpu_rq(cpuid);
+    if(rq == NULL || !rq->cpu_online){
+        return -1;
+    }
+
+    xos_spinlock(&rq->lock);
+    load = sched_rq_load(rq);
+    xos_unspinlock(&rq->lock);
+    return load;
+}
+
+int sched_periodic_balance(void)
+{
+    int busiest = -1;
+    int idlest = -1;
+    int busiest_load = -1;
+    int idlest_load = 0x7fffffff;
+    int cpuid;
+    int possible = xos_cpu_possible_count();
+
+    for(cpuid = 0; cpuid < possible; cpuid++){
+        int load;
+
+        load = sched_cpu_load(cpuid);
+        if(load < 0){
+            continue;
+        }
+        if(load > busiest_load){
+            busiest_load = load;
+            busiest = cpuid;
+        }
+        if(load < idlest_load){
+            idlest_load = load;
+            idlest = cpuid;
+        }
+    }
+
+    if(busiest < 0 || idlest < 0 || busiest == idlest ||
+       busiest_load <= idlest_load + 1){
+        return 0;
+    }
+
+    return sched_balance_pair(busiest, idlest);
+}
+
+int sched_select_task_cpu(const struct task_struct *task,
+                          int preferred_cpuid)
+{
+    int best_cpu = -1;
+    int best_load = 0x7fffffff;
+    int possible = xos_cpu_possible_count();
+    int cpuid;
+
+    for(cpuid = 0; cpuid < possible; cpuid++){
+        cpu_desc_t *rq;
+        int load;
+
+        if(!cpu_array[cpuid].possible || !cpu_array[cpuid].cpu_online ||
+           !sched_task_cpu_allowed(task, cpuid)){
+            continue;
+        }
+
+        rq = &cpu_array[cpuid];
+        xos_spinlock(&rq->lock);
+        load = sched_rq_load(rq);
+        xos_unspinlock(&rq->lock);
+
+        if(load < best_load ||
+           (load == best_load && cpuid == preferred_cpuid)){
+            best_cpu = cpuid;
+            best_load = load;
+        }
+    }
+    return best_cpu;
+}
+
+static struct task_struct *sched_find_migratable(cpu_desc_t *rq,
+                                                 int dst_cpuid)
+{
+    dlist_t *head;
+    dlist_t *node;
+    int prio;
+
+    for(prio = 0; prio < PRIO_MAX; prio++){
+        head = &rq->runqueue[prio].run_list;
+        list_for_each(node, head){
+            struct task_struct *task =
+                list_entry(node, struct task_struct, cpu_list);
+            if(task != rq->cur_task && task->state == TSTATE_READY &&
+               !task->on_cpu && !task->migration_disabled &&
+               !(task->sched_flags & TASK_SCHED_PINNED) &&
+               sched_task_cpu_allowed(task, dst_cpuid)){
+                return task;
+            }
+        }
+    }
+    return NULL;
+}
+
+static int sched_balance_pair(int src_cpuid, int dst_cpuid)
+{
+    cpu_desc_t *first;
+    cpu_desc_t *second;
+    cpu_desc_t *src;
+    cpu_desc_t *dst;
+    struct task_struct *task;
+    const sched_class_t *class;
+    unsigned long flags;
+
+    if(src_cpuid == dst_cpuid){
+        return 0;
+    }
+
+    src = sched_cpu_rq(src_cpuid);
+    dst = sched_cpu_rq(dst_cpuid);
+    if(src == NULL || dst == NULL || !src->cpu_online || !dst->cpu_online){
+        return 0;
+    }
+
+    first = src_cpuid < dst_cpuid ? src : dst;
+    second = src_cpuid < dst_cpuid ? dst : src;
+    flags = arch_local_irq_save();
+    xos_spinlock(&first->lock);
+    xos_spinlock(&second->lock);
+
+    if(sched_rq_load(src) <= sched_rq_load(dst) + 1){
+        xos_unspinlock(&second->lock);
+        xos_unspinlock(&first->lock);
+        arch_local_irq_restore(flags);
+        return 0;
+    }
+
+    task = sched_find_migratable(src, dst_cpuid);
+    if(task == NULL){
+        xos_unspinlock(&second->lock);
+        xos_unspinlock(&first->lock);
+        arch_local_irq_restore(flags);
+        return 0;
+    }
+
+    class = task_get_sched_class(task);
+    class->ops->dequeue_task(src, task);
+    task->cpuid = dst_cpuid;
+    task->task_cpunum = dst_cpuid;
+    class->ops->enqueue_task(dst, task);
+
+    xos_unspinlock(&second->lock);
+    xos_unspinlock(&first->lock);
+    arch_local_irq_restore(flags);
+    xos_smp_send_reschedule(dst_cpuid);
+    return 1;
+}
+
+int sched_balance_idle_cpu(int cpuid)
+{
+    int possible = xos_cpu_possible_count();
+    int src_cpuid;
+
+    for(src_cpuid = 0; src_cpuid < possible; src_cpuid++){
+        if(sched_balance_pair(src_cpuid, cpuid)){
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int sched_migrate_ready_task(struct task_struct *task, int dst_cpuid)
+{
+    cpu_desc_t *first;
+    cpu_desc_t *second;
+    cpu_desc_t *src;
+    cpu_desc_t *dst;
+    const sched_class_t *class;
+    unsigned long flags;
+    int src_cpuid;
+    int ret = -1;
+
+    if(task == NULL || dst_cpuid < 0 ||
+       dst_cpuid >= xos_cpu_possible_count() ||
+       !cpu_array[dst_cpuid].possible || !cpu_array[dst_cpuid].cpu_online ||
+       !sched_task_cpu_allowed(task, dst_cpuid)){
+        return -1;
+    }
+
+    src_cpuid = task->cpuid;
+    if(src_cpuid == dst_cpuid){
+        return 0;
+    }
+    if(src_cpuid < 0 || src_cpuid >= xos_cpu_possible_count()){
+        return -1;
+    }
+
+    src = &cpu_array[src_cpuid];
+    dst = &cpu_array[dst_cpuid];
+    first = src_cpuid < dst_cpuid ? src : dst;
+    second = src_cpuid < dst_cpuid ? dst : src;
+    flags = arch_local_irq_save();
+    xos_spinlock(&first->lock);
+    xos_spinlock(&second->lock);
+
+    if(task->state != TSTATE_READY || task->on_cpu ||
+       task->migration_disabled ||
+       (task->sched_flags & TASK_SCHED_PINNED) ||
+       src->cur_task == task){
+        goto out;
+    }
+
+    class = task_get_sched_class(task);
+    if(class == NULL || class->ops == NULL ||
+       class->ops->dequeue_task == NULL ||
+       class->ops->enqueue_task == NULL){
+        goto out;
+    }
+
+    task->migration_pending = 1;
+    class->ops->dequeue_task(src, task);
+    task->cpuid = dst_cpuid;
+    task->task_cpunum = dst_cpuid;
+    class->ops->enqueue_task(dst, task);
+    task->migration_pending = 0;
+    ret = 0;
+out:
+    xos_unspinlock(&second->lock);
+    xos_unspinlock(&first->lock);
+    arch_local_irq_restore(flags);
+
+    if(ret == 0){
+        xos_smp_send_reschedule(dst_cpuid);
+    }
+    return ret;
+}
+
+int sched_set_task_affinity(struct task_struct *task, uint64 cpu_mask)
+{
+    cpu_desc_t *rq;
+    unsigned long flags;
+    uint64 possible_mask;
+    int need_reschedule = 0;
+    int migrate_now = 0;
+    int dst_cpuid;
+
+    if(task == NULL || cpu_mask == 0){
+        return -1;
+    }
+
+    possible_mask = (1ULL << xos_cpu_possible_count()) - 1;
+    cpu_mask &= possible_mask;
+    if(cpu_mask == 0){
+        return -1;
+    }
+
+    rq = sched_cpu_rq(task->cpuid);
+    if(rq == NULL){
+        return -1;
+    }
+
+    flags = arch_local_irq_save();
+    xos_spinlock(&rq->lock);
+    task->cpus_allowed = cpu_mask;
+    task->sched_flags &= ~TASK_SCHED_PINNED;
+    if(sched_task_cpu_allowed(task, task->cpuid)){
+        task->migration_pending = 0;
+        xos_unspinlock(&rq->lock);
+        arch_local_irq_restore(flags);
+        return 0;
+    }
+
+    if(task->state == TSTATE_READY && !task->on_cpu){
+        migrate_now = 1;
+    }else{
+        task->migration_pending = 1;
+        if(task->on_cpu){
+            task->need_switch = 1;
+            need_reschedule = 1;
+        }
+    }
+    xos_unspinlock(&rq->lock);
+    arch_local_irq_restore(flags);
+
+    dst_cpuid = sched_select_task_cpu(task, task->cpuid);
+    if(migrate_now){
+        return sched_migrate_ready_task(task, dst_cpuid);
+    }
+    if(need_reschedule && dst_cpuid >= 0){
+        xos_smp_send_reschedule(task->cpuid);
+    }
+    return 0;
+}
+
+void sched_migrate_disable(void)
+{
+    if(current_task != NULL){
+        current_task->migration_disabled++;
+    }
+}
+
+void sched_migrate_enable(void)
+{
+    if(current_task != NULL && current_task->migration_disabled > 0){
+        current_task->migration_disabled--;
+        if(current_task->migration_disabled == 0 &&
+           current_task->migration_pending){
+            current_task->need_switch = 1;
+        }
+    }
 }
 
 static struct task_struct *sched_pick_next_task(cpu_desc_t *rq)
@@ -268,17 +661,54 @@ static struct task_struct *sched_pick_next_task(cpu_desc_t *rq)
         return NULL;
     }
 
+    xos_spinlock(&rq->lock);
     for(class = xos_sched_class_root; class != NULL; class = class->next){
         if(class->ops == NULL || class->ops->pick_next_task == NULL){
             continue;
         }
         task = class->ops->pick_next_task(rq);
         if(task != NULL){
+            task->state = TSTATE_RUNNING;
+            task->on_cpu = 1;
+            rq->cur_task = task;
+            xos_unspinlock(&rq->lock);
             return task;
         }
     }
+    xos_unspinlock(&rq->lock);
 
     return NULL;
+}
+
+static void finish_task_switch(struct task_struct *prev)
+{
+    cpu_desc_t *rq;
+    int migration_pending;
+    int dst_cpuid;
+
+    if(prev == NULL || prev == current_task){
+        return;
+    }
+
+    rq = sched_cpu_rq(prev->cpuid);
+    if(rq == NULL){
+        return;
+    }
+
+    xos_spinlock(&rq->lock);
+    prev->on_cpu = 0;
+    if(prev->state == TSTATE_RUNNING){
+        prev->state = TSTATE_READY;
+    }
+    migration_pending = prev->migration_pending;
+    xos_unspinlock(&rq->lock);
+
+    if(migration_pending && prev->state == TSTATE_READY){
+        dst_cpuid = sched_select_task_cpu(prev, prev->cpuid);
+        if(dst_cpuid >= 0 && dst_cpuid != prev->cpuid){
+            sched_migrate_ready_task(prev, dst_cpuid);
+        }
+    }
 }
 
 static void sched_switch_mm(struct task_struct *next)
@@ -391,6 +821,10 @@ void start_schedule_tail(struct task_struct *prev)
         开中断，开启抢占，可以被中断，中断之后进入el1_irq
         保存现场寄存器，执行中断处理函数，恢复现场
     */
+    finish_task_switch(prev);
+    if(current_task != NULL){
+        current_task->sched_flags |= TASK_SCHED_STARTED;
+    }
     arch_local_irq_enable();
     preempt_enable();
 
@@ -536,6 +970,7 @@ void schedule(void)
         return;
     }
     arch_local_irq_disable();
+    prev = get_current_task();
 //  flags = arch_local_irq_save();
 //  next = get_next_task(&task_global_list);
     next = get_next_task_from_cpu(cpuid);
@@ -546,11 +981,10 @@ void schedule(void)
     
     printk(PT_DEBUG,"%s: next->cpu_context.x19=%lx\n\r",__FUNCTION__,next->cpu_context.x19);
     printk(PT_DEBUG,"%s: next->cpu_context.x21=%lx\n\r",__FUNCTION__,next->cpu_context.x21);
-    prev = get_current_task();
-    cpu_array[cpuid].cur_task = next;
     printk(PT_DEBUG,"%s: next->cpu_context.pc=%lx\n\r",__FUNCTION__,next->cpu_context.pc);
     sched_switch_mm(next);
     switch_to_next(prev,next,prev);
+    finish_task_switch(prev);
     arch_local_irq_enable();
 }
 
@@ -566,6 +1000,7 @@ void int_schedule(void)
     struct task_struct *next;
     nesting = 1;
     
+    prev = get_current_task();
 //  next = get_next_task(&task_global_list);
     next = get_next_task_from_cpu(cpuid);
     if(next == NULL){
@@ -575,12 +1010,11 @@ void int_schedule(void)
     
     printk(PT_RUN,"%s: next->cpu_context.x19=%lx\n\r",__FUNCTION__,next->cpu_context.x19);
     printk(PT_RUN,"%s: next->cpu_context.x21=%lx\n\r",__FUNCTION__,next->cpu_context.x21);
-    prev = get_current_task();
-    cpu_array[cpuid].cur_task = next;
     printk(PT_RUN,"%s: next->cpu_context.pc=%lx\n\r",__FUNCTION__,prev->cpu_context.pc);
     sched_switch_mm(next);
     if(next != prev)
-    switch_to_next(prev,next,prev);
+        switch_to_next(prev,next,prev);
+    finish_task_switch(prev);
     nesting = 0;
 }
 
@@ -602,15 +1036,18 @@ void load_first_task()
     int cpuid;
     struct task_struct *tsk = NULL;
     cpuid = cur_cpuid();
- //   printk(PT_DEBUG,"%s:%d,LLLLLLLL\n\r",__func__,__LINE__);
-    tsk = get_next_task(&task_global_list);
     tsk = get_next_task_from_cpu(cpuid);
     if(tsk == NULL){
         return;
     }
  //   printk(PT_DEBUG,"%s:%d,tsk->prio=%d\n\r",__func__,__LINE__,tsk->prio);
 
-    cpu_array[cpuid].cur_task = tsk;
+    if(!cpu_array[cpuid].boot_cpu){
+        dmb(ish);
+        cpu_array[cpuid].cpu_online = 1;
+        sev();
+    }
+    xos_cli();
     load_task(tsk);
 }
 
@@ -622,7 +1059,10 @@ int wake_up_proc(struct task_struct *tsk)
         check process status
     */
     int cpuid;
-    cpuid = cur_cpuid();
+    cpuid = tsk != NULL ? sched_select_task_cpu(tsk, tsk->cpuid) : -1;
+    if(tsk == NULL || cpuid < 0){
+        return -1;
+    }
     xos_spinlock(&g_wakeup_lock);
     if((tsk->state == TSTATE_PENDING)||(tsk->state == TSTATE_SUSPEND)||(tsk->state == TSTATE_STOP)){
 
@@ -647,4 +1087,3 @@ void sched_scheme_select()
     */
 
 }
-
