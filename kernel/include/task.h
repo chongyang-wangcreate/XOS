@@ -15,6 +15,12 @@
 #define SCHED_IDLE          0x02
 #define SCHED_CLASS_RT      0x00
 #define SCHED_CLASS_NORMAL  0x01
+#define TASK_SCHED_STARTED  (1U << 0)
+#define TASK_SCHED_PINNED   (1U << 1)
+#define TASK_RESOURCE_TASK   (1U << 0)
+#define TASK_RESOURCE_KSTACK (1U << 1)
+#define TASK_RESOURCE_MM     (1U << 2)
+#define TASK_RESOURCE_PGD    (1U << 3)
 #define STACK_SIZE  8192
 #define PROCESS_MAX_FILE_NR 1024
 
@@ -52,7 +58,9 @@ typedef enum task_state
     TSTATE_SLEEPING,       
     TSTATE_PENDING,        /* READY_TO_RUN - But blocked */
     TSTATE_SUSPEND,        /* READY_TO_RUN - But suspend util resume */
-    TSTATE_STOP,        
+    TSTATE_STOP,  
+    TSTATE_ZOMBIE,
+    TSTATE_DEAD,      
     NUM_TASK_STATES             /* Must be last */
 } task_state_e;
 
@@ -159,11 +167,18 @@ struct task_struct
 	uint32_t prio;
 	uint32_t default_prio;
     uint32_t sched_policy;
+    uint32_t resource_flags;
+    int32_t exit_code;
     u8   preempt_count; /*抢占计数*/
     u8  soft_nesting;  /*soft irq*/
     u8  int_nesting; /*int irq nesting*/
     char  need_switch; /*抢占标识变量，通过变量判断是否需要抢占*/
+    u8 on_cpu;
+    u8 migration_pending;
+    u8 migration_disabled;
+    u8 migration_reserved;
     int cpuid;
+    uint64 cpus_allowed;
     task_state_e state;
     long   counter;  //timer slice
 //    wait_queue_t wait_childexit;
@@ -255,10 +270,23 @@ static inline void task_refresh_sched_class(struct task_struct *task)
 }
 
 extern int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg);
+extern int xos_thread_create_auto(unsigned int prio, unsigned long fn,
+                                  unsigned long arg);
+extern int xos_thread_create_on_cpu(int cpuid, unsigned int prio,
+                                    unsigned long fn, unsigned long arg);
+extern int xos_process_thread_create(unsigned int prio, unsigned long fn,
+                                     unsigned long arg);
 extern int xos_idle_thread_create(unsigned long fn, unsigned long arg);
 extern struct task_struct *get_current_task(void);
 
 extern void add_to_g_list(struct task_struct *task);
+extern void task_global_init(void);
+extern void task_register_child(struct task_struct *parent,
+                                struct task_struct *child);
+extern struct task_struct *task_find_waitable_child(
+                                struct task_struct *parent, int pid,
+                                int *has_child);
+extern int task_claim_zombie(struct task_struct *task);
 extern void init_fs_context(struct task_struct *parent, struct task_struct *child);
 extern void add_to_cpu_runqueue(int cpuid,struct task_struct *task);
 extern void del_from_cpu_runqueue(int cpuid,struct task_struct *task);

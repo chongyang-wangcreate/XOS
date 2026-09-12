@@ -132,6 +132,8 @@ void kernel_thread2(char *array)
 
 void start_init(char *array)
 {
+    int status;
+    int waited;
 #ifndef CONFIG_VFS
     xos_vfs_init();
     xos_mount_fs();

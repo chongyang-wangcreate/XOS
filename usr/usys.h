@@ -19,6 +19,10 @@ enum{
     NR_CHMOD,
     NR_GETPID,
     NR_EXECVE,
+    NR_EXIT,
+    NR_WAITPID,
+    NR_GETPPID,
+    NR_GETTGID,
     NR_MAX
 
 };

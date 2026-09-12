@@ -39,6 +39,8 @@
 #include "cpu_desc.h"
 #include "arch_irq.h"
 #include "xos_page.h"
+#include "process.h"
+#include "xos_pid.h"
 
 
 
@@ -50,6 +52,8 @@
 int load_proc_flags = 0;
 dlist_t task_global_list;
 dlist_t pend_global_list;
+
+static xos_spinlock_t task_global_lock;
 
 
 char task_space[3][4096] = {0};
@@ -68,14 +72,6 @@ static int task_prio_valid(struct task_struct *task)
     return task != NULL && task->prio < PRIO_MAX;
 }
 
-static void rq_update_preempt(struct task_struct *task)
-{
-    struct task_struct *curr = current_task;
-    if(get_load_flags() != 0 && curr != NULL && task->prio < current_task->prio){
-        curr->need_switch = 1;
-    }
-}
-
 void init_fs_context(struct task_struct *parent, struct task_struct *child)
 {
     if(!parent){
@@ -90,22 +86,153 @@ void init_fs_context(struct task_struct *parent, struct task_struct *child)
 
 void add_to_g_list(struct task_struct *task)
 {
+    unsigned long flags;
+
+    if(task == NULL){
+        return;
+    }
+    flags = xos_spin_lock_irqsave(&task_global_lock);
     list_add_back(&task->g_list, &task_global_list);
+    xos_spin_unlock_irqrestore(&task_global_lock, flags);
+}
+
+void task_global_init(void)
+{
+    list_init(&task_global_list);
+    list_init(&pend_global_list);
+    xos_spinlock_init(&task_global_lock);
+}
+
+
+void task_register_child(struct task_struct *parent,
+                         struct task_struct *child)
+{
+    unsigned long flags;
+
+    if(child == NULL){
+        return;
+    }
+
+    flags = xos_spin_lock_irqsave(&task_global_lock);
+    child->parent = parent;
+    child->ppid = parent != NULL ? parent->pid : 0;
+    list_add_back(&child->g_list, &task_global_list);
+    if(parent != NULL){
+        list_add_back(&child->child_list, &parent->children_list);
+    }
+    xos_spin_unlock_irqrestore(&task_global_lock, flags);
+}
+
+struct task_struct *task_find_waitable_child(struct task_struct *parent,
+                                             int pid, int *has_child)
+{
+    unsigned long flags;
+    dlist_t *node;
+    dlist_t *children;
+    struct task_struct *found = NULL;
+
+    if(has_child != NULL){
+        *has_child = 0;
+    }
+    if(parent == NULL){
+        return NULL;
+    }
+
+    flags = xos_spin_lock_irqsave(&task_global_lock);
+    children = &parent->children_list;
+    list_for_each(node, children){
+        struct task_struct *child =
+            list_entry(node, struct task_struct, child_list);
+
+        if(pid > 0 && child->pid != (pid_t)pid){
+            continue;
+        }
+        if(has_child != NULL){
+            *has_child = 1;
+        }
+        if(child->state == TSTATE_ZOMBIE && !child->on_cpu){
+            found = child;
+            break;
+        }
+    }
+    xos_spin_unlock_irqrestore(&task_global_lock, flags);
+    return found;
+}
+
+int task_claim_zombie(struct task_struct *task)
+{
+    unsigned long flags;
+    int claimed = 0;
+
+    if(task == NULL){
+        return 0;
+    }
+
+    flags = xos_spin_lock_irqsave(&task_global_lock);
+    if(task->state == TSTATE_ZOMBIE && !task->on_cpu){
+        task->state = TSTATE_DEAD;
+        claimed = 1;
+    }
+    xos_spin_unlock_irqrestore(&task_global_lock, flags);
+    return claimed;
+}
+
+void task_unregister(struct task_struct *task)
+{
+    unsigned long flags;
+
+    if(task == NULL){
+        return;
+    }
+    flags = xos_spin_lock_irqsave(&task_global_lock);
+    if(task->g_list.next != &task->g_list){
+        list_del(&task->g_list);
+        list_init(&task->g_list);
+    }
+    if(task->child_list.next != &task->child_list){
+        list_del(&task->child_list);
+        list_init(&task->child_list);
+    }
+    while(!list_is_empty(&task->children_list)){
+        struct task_struct *child =
+            list_entry(task->children_list.next,
+                       struct task_struct, child_list);
+
+        list_del(&child->child_list);
+        list_init(&child->child_list);
+        child->parent = NULL;
+        child->ppid = 0;
+    }
+    task->parent = NULL;
+    xos_spin_unlock_irqrestore(&task_global_lock, flags);
 }
 
 void add_to_cpu_runqueue(int cpuid,struct task_struct *task)
 {
     const sched_class_t *class = task_get_sched_class(task);
     cpu_desc_t *rq = task_cpu_rq(cpuid);
+    struct task_struct *curr;
+    unsigned long flags;
+    int remote_reschedule = 0;
 
     if(rq == NULL || class == NULL || class->ops == NULL || class->ops->enqueue_task == NULL || !task_prio_valid(task)){
         return;
     }
 
+    flags = xos_spin_lock_irqsave(&rq->lock);
     task->cpuid = cpuid;
     task->task_cpunum = cpuid;
     class->ops->enqueue_task(rq,task);
-    rq_update_preempt(task);
+    curr = rq->cur_task;
+    if(curr != NULL && task->prio < curr->prio){
+        curr->need_switch = 1;
+        remote_reschedule = cpuid != (int)cur_cpuid();
+    }
+    xos_spin_unlock_irqrestore(&rq->lock, flags);
+
+    if(remote_reschedule){
+        xos_smp_send_reschedule(cpuid);
+    }
     return;
 
     runque_t *cpu_runque;
@@ -142,10 +269,10 @@ void del_from_cpu_runqueue(int cpuid,struct task_struct *task)
         return;
     }
 
-    flags = arch_local_irq_save();
+    flags = xos_spin_lock_irqsave(&rq->lock);
     printk(PT_RUN,"%s:%d,cur_task->prio=%d,run_cnt=%d\n\r",__func__,__LINE__,task->prio,rq->run_count[task->prio]);
     class->ops->dequeue_task(rq,task);
-    arch_local_irq_restore(flags);
+    xos_spin_unlock_irqrestore(&rq->lock, flags);
     return;
 
     int run_cnt;
@@ -176,12 +303,10 @@ void dup_list_init(dlist_t *head)
     head->prev = head;
 }
 
-void xos_kernel_exit()
-{
-    /*
-        to do
-    */
-}
+ void xos_kernel_exit()
+ {
+    do_sys_exit(0);
+ }
 
 void xos_kernel_entry(void *arg)
 {
@@ -229,22 +354,31 @@ int space_idx = -0;
     不管是内存态线程，还是用户态线程，在堆栈区域的最高地址(我先不用栈顶，栈底来描述，以免有的人混乱)
     都要开辟一块sizeof(pt_regs) 这么大区域，
 */
-int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
+static int xos_thread_create_internal(int cpuid, unsigned int prio,
+                                      unsigned long fn, unsigned long arg,
+                                      uint32_t sched_flags,
+                                      struct task_struct *parent,
+                                      int *pid_out)
 {
-
-    int cpuid;
-    uint64 flags;
+    int ret = -1;
+    int pid = 0;
     thread_union_t *stack;
-    cpuid = cur_cpuid();
+
+    if(cpuid < 0 || cpuid >= xos_cpu_possible_count() ||
+       !cpu_array[cpuid].possible || !cpu_array[cpuid].cpu_online){
+        return -1;
+    }
 //    struct task_struct *child = (struct task_struct *)alloc_page();
     
     struct task_struct *child = (struct task_struct *)xos_get_free_page(0,2);
     if(child == NULL){
         printk(PT_ERROR,"%s:%d, child alloc failed\n\r",__func__,__LINE__);
+        return -1;
     }
     stack = (thread_union_t *)xos_get_free_page(0,1);
-    if(child == NULL || stack == NULL){
-        goto alloc_stack_faild;
+    if(stack == NULL){
+        xos_free_page(child);
+        return -1;
     }
     memset(child,0,sizeof(*child));
     memset(stack,0,sizeof(*stack));
@@ -278,7 +412,11 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
    // printk(PT_RUN,"%s:%d,fn=%llx\n\r",__FUNCTION__,__LINE__,fn);
    // printk(PT_RUN,"%s:%d,x21=%llx\n\r",__FUNCTION__,__LINE__,child->cpu_context.x21);
    
-    child->sched_flags = 0;
+    child->sched_flags = sched_flags;
+    /*亲和性设置*/
+    child->cpus_allowed = (sched_flags & TASK_SCHED_PINNED) ?
+                          (1ULL << cpuid) :
+                          ((1ULL << xos_cpu_possible_count()) - 1);
     child->cpu_context.pc = (unsigned long)ret_from_fork;
     child->cpu_context.sp = (unsigned long)ptr;  //栈顶
     child->default_prio = PRIO_ONE;
@@ -291,6 +429,8 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
     child->state = TSTATE_READY;
     list_init(&child->g_list);
     list_init(&child->cpu_list);
+    list_init(&child->children_list);
+    list_init(&child->child_list);
     list_init(&child->sem_list);
     list_init(&child->delay_list);
     list_init(&child->wait_list);
@@ -309,17 +449,150 @@ int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
         置位相应核优先级的对应的bitmap,如果多个任务可能存在相同优先级，相同优先级加入同一队列
     */
     space_idx++;
-    dup_list_add_after(&child->g_list, &task_global_list);
+    child->resource_flags = TASK_RESOURCE_TASK | TASK_RESOURCE_KSTACK;
+    if(parent != NULL){
+        pid = alloc_pid();
+        if(pid < 0){
+            goto alloc_pid_failed;
+        }
+        child->pid = pid;
+        child->ppid = parent->pid;
+        child->tgid = pid;
+        child->tid = pid;
+        task_register_child(parent, child);
+    }else{
+        add_to_g_list(child);
+    }
 
-    flags = arch_local_irq_save();
     add_to_cpu_runqueue(cpuid,child);
-    arch_local_irq_restore(flags);
+    if(pid_out != NULL){
+        *pid_out = pid;
+    }
+    ret = 0;
 
 //	add_to_g_list(child);
-alloc_stack_faild:
+alloc_pid_failed:
+    if(ret != 0){
+        if(child->resource_flags & TASK_RESOURCE_KSTACK){
+            child->kstack = NULL;
+            child->resource_flags &= ~TASK_RESOURCE_KSTACK;
+            xos_free_page(stack);
+        }
+        if(child->resource_flags & TASK_RESOURCE_TASK){
+            child->resource_flags &= ~TASK_RESOURCE_TASK;
+            xos_free_page(child);
+        }
+    }
 
+    return ret;
+}
+
+int xos_thread_create(unsigned int prio, unsigned long fn, unsigned long arg)
+{
+    return xos_thread_create_internal((int)cur_cpuid(), prio, fn, arg,
+                                      TASK_SCHED_PINNED, NULL, NULL);
+}
+
+int xos_thread_create_on_cpu(int cpuid, unsigned int prio,
+                             unsigned long fn, unsigned long arg)
+{
+    return xos_thread_create_internal(cpuid, prio, fn, arg,
+                                      TASK_SCHED_PINNED, NULL, NULL);
+}
+
+int xos_thread_create_auto(unsigned int prio, unsigned long fn,
+                           unsigned long arg)
+{
+    int cpuid = sched_select_cpu((int)cur_cpuid());
+
+    if(cpuid < 0){
+        return -1;
+    }
+    return xos_thread_create_internal(cpuid, prio, fn, arg, 0, NULL, NULL);
+}
+
+int xos_process_thread_create(unsigned int prio, unsigned long fn,
+                              unsigned long arg)
+{
+    int cpuid = sched_select_cpu((int)cur_cpuid());
+    int pid = -1;
+
+    if(cpuid < 0){
+        return -1;
+    }
+    if(xos_thread_create_internal(cpuid, prio, fn, arg, 0,
+                                  current_task, &pid) != 0){
+        return -1;
+    }
+    return pid;
+}
+
+/*
+ * Idle tasks are private to a CPU.  They are deliberately not put on the
+   global task list or a normal runqueue; the idle scheduler class selects
+   cpu_array[cpuid].idle_task when no runnable task exists.
+ */
+int xos_idle_thread_create(unsigned long fn, unsigned long arg)
+{
+    int cpuid = cur_cpuid();
+    struct task_struct *idle;
+    thread_union_t *stack;
+    struct pt_regs *ptr;
+
+    if(cpuid < 0 || cpuid >= CPU_NR){
+        return -1;
+    }
+
+    idle = (struct task_struct *)xos_get_free_page(0, 2);
+    stack = (thread_union_t *)xos_get_free_page(0, 1);
+    if(idle == NULL || stack == NULL){
+        return -1;
+    }
+
+    memset(idle, 0, sizeof(*idle));
+    memset(stack, 0, sizeof(*stack));
+    stack->thread_val.p_task = idle;
+
+    ptr = get_task_pt_regs_new((char *)stack);
+    memset(ptr, 0, sizeof(*ptr));
+    memset(&idle->cpu_context, 0, sizeof(idle->cpu_context));
+
+    idle->kstack = stack;
+    idle->tsk_entry = (task_fun)fn;
+    idle->cpu_context.x19 = (unsigned long)xos_kernel_entry;
+    idle->cpu_context.x20 = (unsigned long)idle;
+    idle->cpu_context.x21 = (unsigned long)idle;
+    idle->cpu_context.pc = (unsigned long)ret_from_fork;
+    idle->cpu_context.sp = (unsigned long)ptr;
+    idle->default_prio = PRIO_MAX - 1;
+    idle->prio = PRIO_MAX - 1;
+    idle->sched_policy = SCHED_IDLE;
+    idle->sched_flags = TASK_SCHED_PINNED;
+    idle->cpus_allowed = 1ULL << cpuid;
+    idle->state = TSTATE_RUNNING;
+    idle->cpuid = cpuid;
+    idle->task_cpunum = cpuid;
+    task_refresh_sched_class(idle);
+
+    list_init(&idle->g_list);
+    list_init(&idle->cpu_list);
+    list_init(&idle->children_list);
+    list_init(&idle->child_list);
+    list_init(&idle->sem_list);
+    list_init(&idle->delay_list);
+    list_init(&idle->wait_list);
+    list_init(&idle->mutex_list);
+    init_fs_context(NULL, idle);
+    memset(&idle->files_set.fd_set, 0, sizeof(idle->files_set.fd_set));
+    idle->files_set.fd_map.bit_start = (uint8_t *)idle->files_set.fd_set;
+    idle->files_set.fd_map.btmp_bytes_len = sizeof(idle->files_set.fd_set);
+    xos_spinlock_init(&idle->files_set.file_lock);
+    xos_init_timer(&idle->timer, 0, NULL, NULL);
+
+    cpu_array[cpuid].idle_task = idle;
     return 0;
 }
+
 
 /*int xos_idle_thread_create(unsigned long fn, unsigned long arg)
 {
@@ -420,3 +693,4 @@ int do_sys_gettgid()
 {
     return current_task->tgid;
 }
+

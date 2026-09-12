@@ -44,15 +44,15 @@ char* usr_strcpy(char* dst_, const char* src_) {
 #endif
 
 int getpid(){
-    return  SYS_CALL_DEF0(13);
+    return SYS_CALL_DEF0(NR_GETPID);
 }
 
 int getppid(){
-    return  SYS_CALL_DEF0(14);
+    return SYS_CALL_DEF0(NR_GETPPID);
 }
 
 int gettgid(){
-    return  SYS_CALL_DEF0(15);
+    return SYS_CALL_DEF0(NR_GETTGID);
 }
 
 
