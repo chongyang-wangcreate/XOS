@@ -55,6 +55,7 @@ static void xos_reschedule_ipi(void *desc)
     int cpuid = (int)cur_cpuid();
     int need_reschedule = 0;
 
+    (void)desc;
     if(cpuid >= 0 && cpuid < CPU_NR){
         if(cpu_array[cpuid].smp_call_pending){
             xos_smp_call_func_t func;
@@ -98,6 +99,41 @@ void xos_smp_send_reschedule(int cpuid)
     gicv3_send_sgi(cpuid, XOS_RESCHEDULE_IPI);
 }
 
+int xos_smp_call_function_on_cpu(int cpuid,
+                                 xos_smp_call_func_t func,
+                                 void *arg)
+{
+    unsigned long flags;
+
+    if(func == NULL || cpuid < 0 || cpuid >= g_cpu_possible_count ||
+       !cpu_array[cpuid].cpu_online){
+        return -EINVAL;
+    }
+    if(cpuid == (int)cur_cpuid()){
+        func(arg);
+        return 0;
+    }
+
+    flags = arch_local_irq_save();
+    xos_spinlock(&cpu_array[cpuid].smp_call_lock);
+    if(cpu_array[cpuid].smp_call_pending){
+        xos_unspinlock(&cpu_array[cpuid].smp_call_lock);
+        arch_local_irq_restore(flags);
+        return -EBUSY;
+    }
+    cpu_array[cpuid].smp_call_func = func;
+    cpu_array[cpuid].smp_call_arg = arg;
+    dmb(ish);
+    cpu_array[cpuid].smp_call_pending = 1;
+    xos_unspinlock(&cpu_array[cpuid].smp_call_lock);
+    arch_local_irq_restore(flags);
+
+    if(gicv3_send_sgi(cpuid, XOS_RESCHEDULE_IPI) != 0){
+        cpu_array[cpuid].smp_call_pending = 0;
+        return -EIO;
+    }
+    return 0;
+}
 
 /*
     0 比较特殊
@@ -145,6 +181,7 @@ void cpu_desc_init()
     for(; i < real_cpu_num;i++){
         cpu_array[i].cpuid = i;
         cpu_array[i].possible = 1;
+        cpu_array[i].boot_state = XOS_CPU_OFFLINE;
         if(dtb != NULL && dtb->valid && i < dtb->cpu_count){
             cpu_array[i].mpidr = dtb->cpus[i].mpidr & MPIDR_HWID_MASK;
             cpu_array[i].release_addr = dtb->cpus[i].release_addr;
@@ -201,6 +238,14 @@ void cpu_desc_init()
     
 }
 
+void xos_cpu_mark_starting(int cpuid)
+{
+    if(cpuid < 0 || cpuid >= CPU_NR || !cpu_array[cpuid].possible){
+        return;
+    }
+    cpu_array[cpuid].boot_state = XOS_CPU_STARTING;
+    dmb(ish);
+}
 
 void xos_cpu_mark_online(int cpuid)
 {
@@ -209,6 +254,7 @@ void xos_cpu_mark_online(int cpuid)
     }
     cpu_array[cpuid].cpu_online = 1;
     dmb(ish);
+    cpu_array[cpuid].boot_state = XOS_CPU_ONLINE;
     sev();
 }
 
@@ -219,9 +265,17 @@ void xos_cpu_mark_failed(int cpuid)
     }
     cpu_array[cpuid].cpu_online = 0;
     dmb(ish);
+    cpu_array[cpuid].boot_state = XOS_CPU_FAILED;
     sev();
 }
 
+int xos_cpu_boot_state(int cpuid)
+{
+    if(cpuid < 0 || cpuid >= CPU_NR || !cpu_array[cpuid].possible){
+        return XOS_CPU_FAILED;
+    }
+    return cpu_array[cpuid].boot_state;
+}
 
 int xos_mpidr_to_cpuid(u64 mpidr)
 {
@@ -261,7 +315,12 @@ void secondary_cpu_percpu_init(void)
 
 static void secondary_idle_task(void *arg)
 {
+    (void)arg;
     while(1){
+        if(sched_balance_idle_cpu((int)cur_cpuid())){
+            schedule();
+            continue;
+        }
         asm volatile("wfi" ::: "memory");
     }
 }

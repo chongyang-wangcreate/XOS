@@ -4,7 +4,8 @@
 
 extern int alloc_pid();
 extern void free_pid(int pid);
-
+extern void pid_init(void);
+extern int alloc_pid(void);
 
 
 #endif

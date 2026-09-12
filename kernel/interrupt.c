@@ -45,7 +45,10 @@
     当然有时候看起来写的也非常low, 这都是不是问题，慢慢改进
 
 */
-irq_desc_t irq_desc_buf[256];
+irq_desc_t irq_desc_buf[NR_IRQS];
+
+#define GIC_SPURIOUS_IRQ_MIN 1020U
+#define IRQ_NAME_MAX (sizeof(irq_desc_buf[0].name) - 1)
 
 void irq_mask(uint32_t hwirq)
 {
@@ -83,17 +86,27 @@ void irq_exit()
 int request_irq(unsigned int irq, irq_handler_t handler, unsigned long flags,
                 const char *name, void *data)
 {
+     if(irq >= NR_IRQS || handler == NULL || name == NULL){
+        return -1;
+    }
     irq_desc_buf[irq].handle_fun = handler;
     irq_desc_buf[irq].flags = flags;
     irq_desc_buf[irq].handler_data = data;
-    strcpy(irq_desc_buf[irq].name,name);
+    strncpy(irq_desc_buf[irq].name, name, IRQ_NAME_MAX);
+    irq_desc_buf[irq].name[IRQ_NAME_MAX] = '\0';
     irq_unmask(irq);
     return 0;
 }
 
-void xos_handle_irq(int irq_num)
+
+int xos_handle_irq(unsigned int irq_num)
 {
-    irq_desc_buf[irq_num].handle_fun(&irq_desc_buf[irq_num]);
+    if(irq_num >= NR_IRQS || irq_desc_buf[irq_num].handle_fun == NULL){
+        printk(PT_ERROR, "unhandled irq %u\n\r", irq_num);
+        return -1;
+    }
+     irq_desc_buf[irq_num].handle_fun(&irq_desc_buf[irq_num]);
+    return 0;
 }
 
 /*
@@ -108,6 +121,10 @@ void xos_irq_el1_entry(struct pt_regs *regs)
 //  struct task_struct *cur = get_current_task();
     irq_enter();
     irqnr = irq_read_iar();//查手册，查CSDN 
+        if(irqnr >= GIC_SPURIOUS_IRQ_MIN){
+        irq_exit();
+        return;
+    }
     /*
         2024.0308 PM:22:45
         当前中断总入口函数做的并不好
@@ -156,6 +173,10 @@ void xos_irq_el0_entry(struct pt_regs *regs)
     printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
     irq_enter();
     irqnr = irq_read_iar();//查手册，查CSDN 
+    if(irqnr >= GIC_SPURIOUS_IRQ_MIN){
+        irq_exit();
+        return;
+    }
     /*
         2024.0308 PM:22:45
         当前中断总入口函数做的并不好

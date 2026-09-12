@@ -42,7 +42,8 @@
 #define CNTP_CTL_EL     cntp_ctl_el0
 #define CNTFRQ_EL       cntfrq_el0
 #define CNTP_TVAL_EL    cntp_tval_el0
-    
+#define CNTVCT_EL       cntvct_el0    
+
 #else
 
     
@@ -105,6 +106,24 @@ void xos_timer_init_percpu(void)
     arch64_timer_start();
 }
 
+uint64 arch64_timer_get_counter(void)
+{
+    return (uint64)READ_REG(CNTVCT_EL);
+}
+
+uint64 arch64_timer_get_frequency(void)
+{
+    return arch_timer_frequecy();
+}
+
+uint64 arch64_timer_us_to_ticks(uint64 usec)
+{
+    uint64 frequency = arch_timer_frequecy();
+
+    return (usec * frequency) / 1000000ULL;
+}
+
+
 /*
     将kernel_ticks 操作方法timer_isr 具体的中断处理函数中来处理
 
@@ -124,6 +143,9 @@ void timer_isr(void *desc)
 
     if(cpuid == 0){ /* 核0 是主核ticks 操作只能主核操作*/
         kernel_tick_inc();
+        if((kernel_ticks % 100) == 0){
+            sched_periodic_balance();
+        }
     }
 /*
     同优先级管理RR暂时先屏蔽掉

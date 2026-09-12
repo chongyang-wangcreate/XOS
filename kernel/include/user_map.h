@@ -25,7 +25,7 @@ void user_page_mapping(uint64_t *pg_dir, void *virt_addr,
             int prot);
 
 extern void user_load_task(char *array);
-extern void process_create();
+extern int process_create();
 
 
 #endif

@@ -287,6 +287,7 @@ extern struct task_struct *task_find_waitable_child(
                                 struct task_struct *parent, int pid,
                                 int *has_child);
 extern int task_claim_zombie(struct task_struct *task);
+extern void task_unregister(struct task_struct *task);
 extern void init_fs_context(struct task_struct *parent, struct task_struct *child);
 extern void add_to_cpu_runqueue(int cpuid,struct task_struct *task);
 extern void del_from_cpu_runqueue(int cpuid,struct task_struct *task);

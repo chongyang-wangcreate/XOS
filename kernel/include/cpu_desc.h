@@ -21,6 +21,20 @@
 
 #define MPIDR_HWID_MASK 0xff00ffffffUL
 
+enum xos_cpu_boot_state {
+    XOS_CPU_OFFLINE = 0,
+    XOS_CPU_STARTING,
+    XOS_CPU_ONLINE,
+    XOS_CPU_FAILED,
+};
+
+typedef void (*xos_smp_call_func_t)(void *arg);
+
+extern void xos_cpu_mark_starting(int cpuid);
+extern void xos_cpu_mark_online(int cpuid);
+extern void xos_cpu_mark_failed(int cpuid);
+extern int xos_cpu_boot_state(int cpuid);
+
 typedef void (*xos_smp_call_func_t)(void *arg);
 
 extern int xos_mpidr_to_cpuid(u64 mpidr);
@@ -29,6 +43,12 @@ extern int xos_cpu_possible_count(void);
 extern void xos_cpu_mark_online(int cpuid);
 extern void asm_secondary_entry(u64 mpidr);
 
+extern void secondary_cpu_percpu_init(void);
+extern void xos_smp_init(void);
+extern void xos_smp_send_reschedule(int cpuid);
+extern int xos_smp_call_function_on_cpu(int cpuid,
+                                        xos_smp_call_func_t func,
+                                        void *arg);
 
 extern void secondary_cpu_percpu_init(void);
 extern void xos_smp_init(void);
@@ -110,6 +130,7 @@ typedef struct struct_cpu_desc{
     uint64 release_addr;  //spin table mode
     int possible;
     int cpu_online;
+    volatile int boot_state;
     int boot_cpu;
     char enable_method[16];
     int bind_nr; //当前核绑定数量

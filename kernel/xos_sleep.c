@@ -136,10 +136,16 @@ void xos_sleep_timerout(struct timer_struct *timer, void *arg)
 
     l_cur_task->state = TSTATE_READY;
     cpuid = l_cur_task->cpuid;
-    if(cpuid < 0 || cpuid >= CPU_NR){
-        cpuid = cur_cpuid();
+    if(!(l_cur_task->sched_flags & TASK_SCHED_PINNED)){
+        cpuid = sched_select_task_cpu(l_cur_task, cpuid);
+    }else if(cpuid < 0 || cpuid >= CPU_NR ||
+             !cpu_array[cpuid].cpu_online){
+        cpuid = sched_select_cpu(cur_cpuid());
     }
-    add_to_cpu_runqueue(cur_cpuid(),l_cur_task);
+    if(cpuid < 0){
+        return;
+    }
+    add_to_cpu_runqueue(cpuid,l_cur_task);
     #if 0
     cpu_array[cur_cpuid()].run_count[l_cur_task->prio]++;/*2024.405 am:9:23*/
     set_bit((uint8_t*)(cpu_array[cur_cpuid()].run_bitmap.bit_start), l_cur_task->prio);
@@ -163,6 +169,10 @@ void xos_sleep_ticks(u64 ticks)
     }
     cpuid = cur_cpuid();
     arch_local_irq_disable();
+    if(l_cur == NULL){
+        arch_local_irq_enable();
+        return;
+    }
     l_cur->state = TSTATE_SLEEPING;
     run_cnt = cpu_array[cur_cpuid()].run_count[l_cur->prio];
     printk(PT_RUN,"%s:%d,cur_task->prio=%d,run_cnt=%d\n\r",__func__,__LINE__,l_cur->prio,run_cnt);
@@ -182,8 +192,9 @@ void xos_sleep_ticks(u64 ticks)
     /*
         sleep 工作暂时不用    wait_queue[prio].wait_list   ，这个后续可做它用
         20240405 pm:22:00 折腾版本说怎么不调度了，左找右找
-        糊涂了，尽然把他给忽略了
+        糊涂了，竟然把他给忽略了
         20240519 PM:17:12 schedule 需要做保护工作
     */
     schedule();  
 }
+

@@ -368,7 +368,6 @@ static int xos_thread_create_internal(int cpuid, unsigned int prio,
        !cpu_array[cpuid].possible || !cpu_array[cpuid].cpu_online){
         return -1;
     }
-//    struct task_struct *child = (struct task_struct *)alloc_page();
     
     struct task_struct *child = (struct task_struct *)xos_get_free_page(0,2);
     if(child == NULL){
@@ -528,7 +527,7 @@ int xos_process_thread_create(unsigned int prio, unsigned long fn,
 }
 
 /*
- * Idle tasks are private to a CPU.  They are deliberately not put on the
+   Idle tasks are private to a CPU.  They are deliberately not put on the
    global task list or a normal runqueue; the idle scheduler class selects
    cpu_array[cpuid].idle_task when no runnable task exists.
  */

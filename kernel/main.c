@@ -61,6 +61,10 @@
 #include "uart.h"
 #include "device_tree.h"
 #include "memblock.h"
+#include "smp_test.h"
+#include "xos_pid.h"
+#include "process_test.h"
+#include "process.h"
 #include "psci.h"
 /********************************************************************************************
 
@@ -132,8 +136,9 @@ void kernel_thread2(char *array)
 
 void start_init(char *array)
 {
-    int status;
-    int waited;
+//    int child_pid;
+//    int status;
+//    int waited;
 #ifndef CONFIG_VFS
     xos_vfs_init();
     xos_mount_fs();
@@ -147,12 +152,33 @@ void start_init(char *array)
 #ifndef CONFIG_DEV
      xos_init_deivices(); 
 #endif
+
+#ifdef CONFIG_PROCESS_TEST
+    xos_process_selftest();
+#endif
     process_create();
-    while(1)
-    {
-        xos_sleep_ticks(10);
-       // printk(PT_DEBUG,"%s:%d\n\r",__func__,__LINE__);
-    }
+    while(1){
+        /*child_pid = process_create();
+        if(child_pid < 0){
+            printk(PT_ERROR,"first user process creation failed\n\r");
+            xos_sleep_ticks(10);
+            continue;
+        }
+
+        status = 0;
+        waited = do_sys_waitpid(child_pid, &status, 0);
+        if(waited == child_pid){
+            printk(PT_WARRING,
+                   "init reaped user process pid=%d status=%d\n\r",
+                   waited, status);
+        }else{
+            printk(PT_ERROR,
+                   "init waitpid failed pid=%d ret=%d\n\r",
+                   child_pid, waited);
+        }*/
+        xos_sleep_ticks(1);
+     }
+
 }
 
 
@@ -189,7 +215,6 @@ void kernel_init (uint64 dtb_phys)
     all_phys_linear_map();
     xos_zone_init();
     mem_cache_init();
-   // test_buddy();
 
     xos_uart_puts("Hello from kernel_init 5\n");
     local_irq_disable();
@@ -199,8 +224,8 @@ void kernel_init (uint64 dtb_phys)
 
     xos_timer_init();
 
-    list_init(&task_global_list);
-    list_init(&pend_global_list);
+    task_global_init();
+    pid_init();
     cpu_desc_init();
     xos_smp_init();
     /*
@@ -210,7 +235,10 @@ void kernel_init (uint64 dtb_phys)
     xos_thread_create(5, (unsigned long)&kernel_idle, 6);
     xos_thread_create(2, (unsigned long)&start_init, 6);
     xos_boot_secondary_cpus();
-    xos_uart_puts("Hello from kernel_init 6\n");
+    #ifdef CONFIG_SMP_TEST
+    xos_smp_selftest_start();
+    #endif
+
     xos_cli();
     load_proc_flags = 1;
     load_first_task();

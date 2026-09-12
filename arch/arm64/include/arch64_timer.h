@@ -20,6 +20,9 @@ extern void arch64_timer_start(void);
 extern int arch64_timer_stop();
 extern void xos_timer_init_percpu(void);
 extern uint64 second_to_ticks(int seconds);
+extern uint64 arch64_timer_get_counter(void);
+extern uint64 arch64_timer_get_frequency(void);
+extern uint64 arch64_timer_us_to_ticks(uint64 usec);
 extern void xos_timer_init();
 
 

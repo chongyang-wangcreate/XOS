@@ -1,18 +1,3 @@
-/*
-    development started: 2024
-    All rights reserved
-    author :wangchongyang
-    email:rockywang599@gmail.com
-    
-    Copyright (c) 2024 - 2028 wangchongyang
-
-    2024.03.24 AM:1:45
-    自己的第一版程序设计，代码编写不会复杂，而是越简单越好，
-    操作系统的工作开发量非常大，当前就是先实现功能，系统可以跑
-    不会耗费经历在复杂的算法上
-
-*/
-
 #include "types.h"
 #include "setup_map.h"
 #include "printk.h"
@@ -51,6 +36,10 @@ int nesting = 0;
     不会耗费经历在复杂的算法上
 
     2026.8.28 22:04: Add scheduling classes, and first implement the basic framework
+
+    2026.09.12 21:43: The current scheduler class implementation is suboptimal. 
+    It would be better if the cpu_desc were bound to the scheduler class instead of belonging to a specific CPU's descriptor.
+    This will be optimized in the future
 */
 
 extern dlist_t task_global_list;
@@ -1036,18 +1025,15 @@ void load_first_task()
     int cpuid;
     struct task_struct *tsk = NULL;
     cpuid = cur_cpuid();
+ //   printk(PT_DEBUG,"%s:%d,LLLLLLLL\n\r",__func__,__LINE__);
     tsk = get_next_task_from_cpu(cpuid);
     if(tsk == NULL){
         return;
     }
- //   printk(PT_DEBUG,"%s:%d,tsk->prio=%d\n\r",__func__,__LINE__,tsk->prio);
+ //  printk(PT_DEBUG,"%s:%d,tsk->prio=%d\n\r",__func__,__LINE__,tsk->prio);
 
-    if(!cpu_array[cpuid].boot_cpu){
-        dmb(ish);
-        cpu_array[cpuid].cpu_online = 1;
-        sev();
-    }
     xos_cli();
+    sched_switch_mm(tsk);
     load_task(tsk);
 }
 
@@ -1077,13 +1063,3 @@ int wake_up_proc(struct task_struct *tsk)
     return 0;
 }
 
-
-void sched_scheme_select()
-{
-    /*
-        1. support  RT
-          1.1 .Supports up to 128 priority tasks
-        2. support cfs
-    */
-
-}
