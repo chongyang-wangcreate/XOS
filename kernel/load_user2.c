@@ -44,6 +44,8 @@
 #include "fork.h"
 #include "user_map.h"
 #include "error.h"
+#include "xos_pid.h"
+#include "process.h"
 
 /*
     2024.10.20
@@ -496,11 +498,11 @@ int create_process_vma(struct task_struct *cur_task)
 
 }
 
-void process_create()
+int process_create(void)
 {
     uint64_t user_stack_top = USER_STACK_TOP;
     uint64_t user_entry_addr;
-    
+    int ret;
     uint64_t cpuid;
     thread_union_t *kstack;
     struct task_struct *cur_task = NULL;
@@ -508,24 +510,35 @@ void process_create()
 
     cur_task = (struct task_struct *)xos_get_free_page(0,2);
 //  cur_task = xos_kmalloc(sizeof (struct task_struct));
+    if(cur_task == NULL){
+        return -ENOMEM;
+    }
+    memset(cur_task, 0, sizeof(*cur_task));
+    cur_task->resource_flags = TASK_RESOURCE_TASK;
 
-    unsigned long buf_start = (unsigned long)task_buf;  // 获取 task_buf 的起始地址
-    unsigned long pgd_buf_start = (unsigned long)task_pgd_buf;
+    cur_task->mm = xos_kmalloc(sizeof(*cur_task->mm));
+    if(cur_task->mm == NULL){
+        goto alloc_stack_faild;
+    }
+    memset(cur_task->mm, 0, sizeof(*cur_task->mm));
+    xos_spinlock_init(&cur_task->mm->mm_lock);
+    cur_task->resource_flags |= TASK_RESOURCE_MM;
 
-    buf_start = (buf_start + 0xFFF) & ~0xFFF;  // 将地址对齐到 4KB 边界
-    pgd_buf_start = (pgd_buf_start + 0xFFF) & ~0xFFF;
-//  cur_task = (struct task_struct *)buf_start;
-    cur_task->task_pgd = (pgd_t*)pgd_buf_start;
-
-    cur_task->mm = (struct mm_struct*)task_mm;
+    cur_task->task_pgd = xos_get_free_page(0,1);
+    if(cur_task->task_pgd == NULL){
+        goto alloc_stack_faild;
+    }
+    memset(cur_task->task_pgd, 0, PAGE_SIZE);
+    cur_task->mm->mm_pgd = cur_task->task_pgd;
+    cur_task->resource_flags |= TASK_RESOURCE_PGD;
 
     init_mm(cur_task->mm);
-    create_process_vma(cur_task);
-
+    ret = create_process_vma(cur_task);
+    if(ret < 0){
+        goto alloc_stack_faild;
+    }
     vma_space_maps(cur_task);
     printk(PT_DEBUG,"%s:%d\n",__FUNCTION__,__LINE__);
-    
-    set_ttbr0_el1((uint64)(V2P(cur_task->task_pgd)));
 
     user_entry_addr = get_user_entry();
     printk(PT_DEBUG,"%s:%d,user_init_addr=%lx\n",__FUNCTION__,__LINE__,user_entry_addr);
@@ -538,6 +551,9 @@ void process_create()
     if(kstack == NULL){
         goto alloc_stack_faild;
     }
+    memset(kstack, 0, sizeof(*kstack));
+    cur_task->resource_flags |= TASK_RESOURCE_KSTACK;
+    cur_task->kstack = kstack;
     kstack->thread_val.p_task = cur_task;
     struct pt_regs * cur_regs = get_task_pt_regs_new((char*)kstack);
     memset(cur_regs,0, sizeof(struct pt_regs));
@@ -549,14 +565,23 @@ void process_create()
         当前重要工作是对zone 区域做区分，当前只有一个区域zone_normal
     */
     init_ucontext(cur_regs, (void*)user_entry_addr, (void*)user_stack_top);
+    cur_task->user_entry = (task_fun)user_entry_addr;
     cur_task->parent = current_task;
+    cur_task->pid = alloc_pid();
+    if((int)cur_task->pid < 0){
+        goto alloc_stack_faild;
+    }
+    cur_task->ppid = current_task != NULL ? current_task->pid : 0;
+    cur_task->tgid = cur_task->pid;
+    cur_task->tid = cur_task->pid;
+    cur_task->task_type = TASK_TYPE_USER;
+    cur_task->cpus_allowed = (1ULL << xos_cpu_possible_count()) - 1;
     cur_task->default_prio = PRIO_ONE;
     cur_task->prio = cur_task->default_prio+2;
     cur_task->timeslice = 5;
     cur_task->timerslice_count = cur_task->timeslice;
     cur_task->cpu_context.pc = (unsigned long)ret_from_fork;
     cur_task->cpu_context.sp = (unsigned long)cur_regs;  //栈顶
-    cur_task->kstack = kstack;
     cur_task->cpu_context.x19 = 0;  /*very important*/
     cur_task->cpu_context.x22 = 5097;
     cur_task->cpu_context.x23 = 5098;
@@ -569,18 +594,43 @@ void process_create()
     cur_task->state = TSTATE_READY;
     list_init(&cur_task->g_list);
     list_init(&cur_task->cpu_list);
+    list_init(&cur_task->children_list);
+    list_init(&cur_task->child_list);
     list_init(&cur_task->sem_list);
     list_init(&cur_task->delay_list);
+    list_init(&cur_task->wait_list);
+    list_init(&cur_task->mutex_list);
     printk(PT_DEBUG,"%s:%d,cur_task->cpu_context.pc=%lx\n",__FUNCTION__,__LINE__,cur_task->cpu_context.pc);
     init_fs_context(current_task,cur_task);
     memset(&cur_task->files_set.fd_set,0,sizeof(cur_task->files_set.fd_set));
     cur_task->files_set.fd_map.bit_start = (uint8_t*)cur_task->files_set.fd_set;
     cur_task->files_set.fd_map.btmp_bytes_len = sizeof(cur_task->files_set.fd_set);
+    xos_spinlock_init(&cur_task->files_set.file_lock);
     printk(PT_DEBUG,"%s:%d,user_init_addr=%lx\n",__FUNCTION__,__LINE__,user_entry_addr);
     xos_init_timer(&cur_task->timer, 0, NULL, NULL);
+    task_register_child(current_task, cur_task);
     add_to_cpu_runqueue(cpuid,cur_task);
     printk(PT_DEBUG,"%s:%d,user_init_addr=%lx\n",__FUNCTION__,__LINE__,user_entry_addr);
+    return (int)cur_task->pid;
+
+
 alloc_stack_faild:
-    return ;
+    if((int)cur_task->pid > 0){
+        free_pid(cur_task->pid);
+        cur_task->pid = 0;
+    }
+    if(cur_task->resource_flags & TASK_RESOURCE_KSTACK){
+        kstack = cur_task->kstack;
+        cur_task->kstack = NULL;
+        cur_task->resource_flags &= ~TASK_RESOURCE_KSTACK;
+        xos_free_page(kstack);
+    }
+    process_release_address_space(cur_task);
+    if(cur_task->resource_flags & TASK_RESOURCE_TASK){
+        cur_task->resource_flags &= ~TASK_RESOURCE_TASK;
+        xos_free_page(cur_task);
+    }
+    return -ENOMEM;
 
 }
+

@@ -26,11 +26,14 @@
 #include "setup_map.h"
 #include "xos_zone.h"
 #include "printk.h"
+#include "spinlock.h"
 
 extern uint64 l1_kernel_pgt[];
 
 static uint64 kmap_slot_pa;
 static void *const kmap_slot_va = (void *)XOS_FIXMAP_ADDR(0);
+static xos_spinlock_t kmap_slot_lock;
+static unsigned long kmap_slot_irq_flags;
 /*
     2026.08.29 16:39
     There are minor issues with the kmap implementation,
@@ -218,11 +221,13 @@ void *xos_kmap_page_pa(uint64 pa)
     }
 
     if (zone == &zone_user) {
+        kmap_slot_irq_flags = xos_spin_lock_irqsave(&kmap_slot_lock);
         if (kmap_slot_pa != pa) {
             if (kmap_slot_pa != 0) {
                 xos_kmap_slot_unmap();
             }
             if (xos_kmap_slot_map(pa) == NULL) {
+                xos_spin_unlock_irqrestore(&kmap_slot_lock,kmap_slot_irq_flags);
                 return NULL;
             }
         }
@@ -238,6 +243,7 @@ void xos_kunmap_page(void *kva)
         return;
     }
     xos_kmap_slot_unmap();
+    xos_spin_unlock_irqrestore(&kmap_slot_lock,kmap_slot_irq_flags);
 }
 
 int xos_page_get(uint64 pa)

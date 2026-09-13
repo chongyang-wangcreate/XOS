@@ -52,6 +52,7 @@
 #include "xos_page.h"
 #include "xos_vmm.h"
 #include "fork.h"
+#include "xos_pid.h"
 
 /*
     2026.0830 09：46 
@@ -61,13 +62,6 @@
     - Only copy valid page‑table entries
 
 */
-int get_free_pid()
-{
-    static int next_pid = 1;
-
-    return next_pid++;
-}
-
 static inline void fork_flush_tlb(void)
 {
     asm volatile("dsb ishst" ::: "memory");
@@ -160,10 +154,12 @@ int copy_task_struct(struct task_struct *child,  struct task_struct *parent)
     pgd_t *child_pgd;
     struct mm_struct *child_mm;
     struct cpu_context child_context;
+    uint32_t child_resources;
 
     child_kstack = child->kstack;
     child_pgd = child->task_pgd;
     child_mm = child->mm;
+    child_resources = child->resource_flags;
     memcpy(&child_context, &child->cpu_context, sizeof(child_context));
 
     xos_spinlock(&parent->mm->mm_lock);
@@ -171,12 +167,23 @@ int copy_task_struct(struct task_struct *child,  struct task_struct *parent)
     child->kstack = child_kstack;
     child->task_pgd = child_pgd;
     child->mm = child_mm;
+    child->resource_flags = child_resources;
     memcpy(&child->cpu_context, &child_context, sizeof(child->cpu_context));
-    child->pid = get_free_pid();
-    child->tgid = parent->pid;
+    child->pid = alloc_pid();
+    if((int)child->pid < 0){
+        xos_unspinlock(&parent->mm->mm_lock);
+        return -1;
+    }
+    child->tgid = child->pid;
     child->ppid = parent->pid;
     child->tid = child->pid;
     child->state = TSTATE_READY;
+    child->exit_code = 0;
+    child->on_cpu = 0;
+    child->need_switch = 0;
+    child->migration_pending = 0;
+    child->migration_disabled = 0;
+    child->sched_flags &= ~TASK_SCHED_STARTED;
     list_init(&child->sem_list);
     list_init(&child->cpu_list);
     list_init(&child->g_list);
@@ -335,10 +342,12 @@ int  copy_mm(struct task_struct *child,  struct task_struct *parent)
     if(ret < 0){
         goto  fail_alloc_mm;
     }
+    child->resource_flags |= TASK_RESOURCE_MM;
     ret = alloc_pgd_init(child);
     if(ret < 0){
         goto fail_alloc_pgd;
     }
+    child->resource_flags |= TASK_RESOURCE_PGD;
     ret = copy_vma(child,parent);
     if(ret < 0){
         goto fail_copy_vma;
@@ -346,10 +355,12 @@ int  copy_mm(struct task_struct *child,  struct task_struct *parent)
     return 0;
 
 fail_copy_vma:
+    child->resource_flags &= ~TASK_RESOURCE_PGD;
     xos_free_page(child->task_pgd);
     child->task_pgd = NULL;
 
 fail_alloc_pgd:
+    child->resource_flags &= ~TASK_RESOURCE_MM;
     xos_kfree(child->mm);
     child->mm = NULL;
 fail_alloc_mm:
@@ -359,10 +370,25 @@ fail_alloc_mm:
 
 void copy_files(struct task_struct *child,  struct task_struct *parent)
 {
+    int fd;
+
     memcpy(&child->fs_context,&parent->fs_context,sizeof(parent->fs_context));
     memcpy(&child->files_set,&parent->files_set,sizeof(parent->files_set));
     xos_spinlock_init(&child->fs_context.lock);
     xos_spinlock_init(&child->files_set.file_lock);
+    child->files_set.fd_map.bit_start = (uint8_t *)child->files_set.fd_set;
+    child->files_set.fd_map.btmp_bytes_len = sizeof(child->files_set.fd_set);
+    for(fd = 0; fd < MAX_FILE_NR; fd++){
+        struct file *filp = child->files_set.file_set[fd];
+
+        if(filp == NULL){
+            continue;
+        }
+        xos_spinlock(&filp->f_lock);
+        filp->ref_count++;
+        filp->f_count++;
+        xos_unspinlock(&filp->f_lock);
+    }
     
 }
 
@@ -384,7 +410,10 @@ static int copy_process( struct task_struct *child,  struct task_struct *parent)
     memcpy(&child->cpu_context,&parent->cpu_context,sizeof(parent->cpu_context));
     xos_unspinlock(&parent->mm->mm_lock);
     child_stack->thread_val.p_task = child;
-    copy_task_struct(child,parent);
+    ret = copy_task_struct(child,parent);
+    if(ret < 0){
+        return ret;
+    }
     ret = copy_mm(child,parent);
     if(ret < 0){
         return ret;
@@ -402,7 +431,7 @@ void clone_mnt()
 
 
 }
-int do_clone(int clone_flags)
+int do_clone(int clone_flags, struct pt_regs *parent_regs)
 {
     #define FOR_FAILE -1
     int ret;
@@ -412,16 +441,24 @@ int do_clone(int clone_flags)
     struct task_struct *cur = current_task;
     struct task_struct *child;
 
+    if(parent_regs == NULL){
+        return -EINVAL;
+    }
+
     flags = arch_local_irq_save();
 
     child = xos_get_free_page(0, 2);
     if(!child){
         goto fail_alloc_task;
     }
+    memset(child, 0, sizeof(*child));
+    child->resource_flags = TASK_RESOURCE_TASK;
     kstack = (thread_union_t *)xos_get_free_page(0,1);
     if(!kstack){
         goto fail_kstack;
     }
+    memset(kstack, 0, sizeof(*kstack));
+    child->resource_flags |= TASK_RESOURCE_KSTACK;
     struct pt_regs * ptr = get_task_pt_regs_new((char*)kstack);
     memset(ptr,0, sizeof(struct pt_regs));
     memset(&child->cpu_context, 0,sizeof(struct cpu_context));
@@ -430,6 +467,12 @@ int do_clone(int clone_flags)
     if(ret < 0){
         goto fail_copy_process;
     }
+    /*
+      The user return frame belongs to the current syscall exception, not
+      to task_struct::cpu_context.  Copy it explicitly so the child
+      memcpy(child->kstack, parent->kstack, 2*PAGE_SIZE);
+     */
+    memcpy(ptr, parent_regs, sizeof(*ptr));
     kstack->thread_val.p_task = child;
     child->sched_policy = SCHED_RR;
     task_refresh_sched_class(child);
@@ -446,8 +489,11 @@ int do_clone(int clone_flags)
 
     ((struct pt_regs *)(child->cpu_context.sp))->regs[0] = 0;
 
-    cpuid = cur_cpuid();
-    add_to_g_list(child);
+    cpuid = sched_select_task_cpu(child, cur_cpuid());
+    if(cpuid < 0){
+        goto fail_copy_process;
+    }
+    task_register_child(cur, child);
     add_to_cpu_runqueue(cpuid, child);
 //    regs->regs[0] = child->pid;
 //    return regs->regs[0];
@@ -455,10 +501,35 @@ int do_clone(int clone_flags)
     return child->pid;
 
 fail_copy_process:
-    xos_free_page(kstack);
+    if((int)child->pid > 0){
+        free_pid(child->pid);
+        child->pid = 0;
+    }
+    if((child->resource_flags & TASK_RESOURCE_PGD) && child->task_pgd){
+        pgd_t *task_pgd = child->task_pgd;
+
+        child->task_pgd = NULL;
+        child->resource_flags &= ~TASK_RESOURCE_PGD;
+        xos_free_page(task_pgd);
+    }
+    if((child->resource_flags & TASK_RESOURCE_MM) && child->mm){
+        struct mm_struct *mm = child->mm;
+
+        child->mm = NULL;
+        child->resource_flags &= ~TASK_RESOURCE_MM;
+        xos_kfree(mm);
+    }
+    if(child->resource_flags & TASK_RESOURCE_KSTACK){
+        child->kstack = NULL;
+        child->resource_flags &= ~TASK_RESOURCE_KSTACK;
+        xos_free_page(kstack);
+    }
 
 fail_kstack:
-    xos_free_page(child);
+    if(child->resource_flags & TASK_RESOURCE_TASK){
+        child->resource_flags &= ~TASK_RESOURCE_TASK;
+        xos_free_page(child);
+    }
 
 fail_alloc_task:
 
