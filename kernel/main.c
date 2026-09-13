@@ -136,9 +136,9 @@ void kernel_thread2(char *array)
 
 void start_init(char *array)
 {
-//    int child_pid;
-//    int status;
-//    int waited;
+    int child_pid;
+    int status;
+    int waited;
 #ifndef CONFIG_VFS
     xos_vfs_init();
     xos_mount_fs();
@@ -156,9 +156,9 @@ void start_init(char *array)
 #ifdef CONFIG_PROCESS_TEST
     xos_process_selftest();
 #endif
-    process_create();
+   // process_create();
     while(1){
-        /*child_pid = process_create();
+        child_pid = process_create();
         if(child_pid < 0){
             printk(PT_ERROR,"first user process creation failed\n\r");
             xos_sleep_ticks(10);
@@ -175,7 +175,7 @@ void start_init(char *array)
             printk(PT_ERROR,
                    "init waitpid failed pid=%d ret=%d\n\r",
                    child_pid, waited);
-        }*/
+        }
         xos_sleep_ticks(1);
      }
 
@@ -192,8 +192,6 @@ void xos_set_vector_entry()
 void kernel_init (uint64 dtb_phys)
 {
     clear_kbss();
-  // boot_uart_init((uint32*)UART0_VIRT);
-  // boot_puts("xos boot_main\n");
     xos_uart_init();
     boot_mem_init();
     xos_dtb_set_boot_phys(dtb_phys);
@@ -236,7 +234,7 @@ void kernel_init (uint64 dtb_phys)
     xos_thread_create(2, (unsigned long)&start_init, 6);
     xos_boot_secondary_cpus();
     #ifdef CONFIG_SMP_TEST
-    xos_smp_selftest_start();
+    xos_smp_selftest();
     #endif
 
     xos_cli();

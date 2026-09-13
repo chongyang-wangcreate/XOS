@@ -61,8 +61,8 @@ enum{
 int do_syscall_fork(struct pt_regs *regs){
 
     int clone_flags = 0;
-//    return do_clone(clone_flags,regs);
-    return do_clone(clone_flags);
+    return do_clone(clone_flags,regs);
+
 }
 int do_syscall_open(struct pt_regs *regs)
 {
@@ -190,34 +190,60 @@ int do_syscall_execve(struct pt_regs *regs)
     return do_sys_execve(pathname,argv,envp,regs);
 }
 
+int do_syscall_exit(struct pt_regs *regs)
+{
+    do_sys_exit((int)regs->regs[0]);
+    return 0;
+}
+
+int do_syscall_waitpid(struct pt_regs *regs)
+{
+    return do_sys_waitpid((int)regs->regs[0],
+                          (int *)regs->regs[1],
+                          (int)regs->regs[2]);
+}
+
+
+int do_syscall_gettgid(struct pt_regs *regs)
+{
+    return do_sys_gettgid();
+}
+
+
 sys_call_fun syscall_tabs[128] = {
-        do_syscall_fork,
-        do_syscall_open,
-        do_syscall_read,
-        do_syscall_write,
-        do_syscall_sleep,
-        do_syscall_getcwd,
-        do_syscall_chdir,
-        do_syscall_dup,
-        do_syscall_mkdir,
-        do_syscall_getstat,
-        do_syscall_readdir,
-        do_syscall_llseek,
-        do_syscall_chmod,
-        do_syscall_getpid,
+    [NR_FORK] = do_syscall_fork,
+    [NR_OPEN] = do_syscall_open,
+    [NR_READ] = do_syscall_read,
+    [NR_WRITE] = do_syscall_write,
+    [NR_SLEEP] = do_syscall_sleep,
+    [NR_PWD] = do_syscall_getcwd,
+    [NR_CD] = do_syscall_chdir,
+    [NR_DUP] = do_syscall_dup,
+    [NR_MKDIR] = do_syscall_mkdir,
+    [NR_STAT] = do_syscall_getstat,
+    [NR_READDIR] = do_syscall_readdir,
+    [NR_LSEEK] = do_syscall_llseek,
+    [NR_CHMOD] = do_syscall_chmod,
+    [NR_GETPID] = do_syscall_getpid,
+    [NR_EXECVE] = do_syscall_execve,
+    [NR_EXIT] = do_syscall_exit,
+    [NR_WAITPID] = do_syscall_waitpid,
+    [NR_GETPPID] = do_syscall_getppid,
+    [NR_GETTGID] = do_syscall_gettgid,
+
 };
 
 
-
 int sys_call_entry(int sys_call_no,struct pt_regs *regs)
-{
-    int ret;
-    printk(PT_RUN,"%s:%d,sys_call_no=%d\n\r",__FUNCTION__,__LINE__,sys_call_no);
-    if(sys_call_no >= NR_MAX){
-        return -1;
-    }
-    ret = syscall_tabs[sys_call_no](regs);
-    return ret;
-}
+ {
+     int ret;
+     printk(PT_RUN,"%s:%d,sys_call_no=%d\n\r",__FUNCTION__,__LINE__,sys_call_no);
+     if(sys_call_no < 0 || sys_call_no >= NR_MAX ||
+        syscall_tabs[sys_call_no] == NULL){
+         return -1;
+     }
+     ret = syscall_tabs[sys_call_no](regs);
+     return ret;
+ }
 
 

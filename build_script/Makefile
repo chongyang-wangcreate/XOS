@@ -1,4 +1,5 @@
 QEMU = qemu-system-arm
+.DEFAULT_GOAL := kernel.elf
 CROSSCOMPILE := aarch64-linux-gnu-
 #CROSSCOMPILE := aarch64-none-elf-
 # CROSSCOMPILE := arm-linux-gnueabi-
@@ -30,10 +31,13 @@ CFLAGS := \
     -I./fs \
     -I./usr/libc/include/ \
     -I./usr \
+    -MMD -MP \
    # -nostdinc
 LDFLAGS = -L. -L/mm -L./kernel/init -L./kernel -L./arch/arm64
 
 ASFLAGS = -march=armv8-a
+EXTRA_CFLAGS ?=
+CFLAGS += $(EXTRA_CFLAGS)
 
 LIBGCC = $(shell $(CC) -print-libgcc-file-name)
 
@@ -138,6 +142,10 @@ KERNEL_OBJ = \
     kernel/syscall/fork.o\
     kernel/interrupt.o\
     kernel/cpu_desc.o\
+    kernel/xos_pid.o\
+    kernel/smp_test.o\
+    kernel/process.o\
+    kernel/process_test.o\
     kernel/tick_timer.o\
     kernel/xos_sleep.o\
     kernel/vector.o\
@@ -190,6 +198,7 @@ USER_OBJ = \
     usr/libc/mkdir.o\
     usr/libc/fork.o\
     usr/libc/exec.o\
+    usr/libc/process.o\
     usr/libc/readdir.o\
     usr/ls.o\
     usr/usr_printf.o
@@ -207,6 +216,9 @@ OBJS += $(USER_OBJ)
 OBJS += $(DRIV_OBJ)
 
 KERN_OBJS = $(OBJS) 
+DEPS = $(addprefix output/,$(OBJS:.o=.d))
+-include $(DEPS)
+
 kernel.elf: $(addprefix output/,$(KERN_OBJS)) ./arch/arm64/kernel_lds.ld 
 	$(call LINK_BIN, ./arch/arm64/kernel_lds.ld, kernel.elf, \
 		$(addprefix output/,$(KERN_OBJS)), \
@@ -219,4 +231,3 @@ clean:
 	rm -f *.o *.d *.asm *.sym 
 	rm -f kernel.asm
 	rm -f kernel.elf
-

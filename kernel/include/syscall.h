@@ -20,6 +20,10 @@ enum{
     NR_CHMOD,
     NR_GETPID,
     NR_EXECVE,
+    NR_EXIT,
+    NR_WAITPID,
+    NR_GETPPID,
+    NR_GETTGID,
     NR_MAX
 
 };
@@ -39,7 +43,7 @@ extern ssize_t do_sys_write(int fd,void *buf,ssize_t count);
 extern int do_sys_getcwd(char *user_buf,int buf_size);
 extern int do_sys_chdir(char *user_pathname);
 extern int do_sys_dup(int old_fd);
-extern int do_clone(int clone_flags);
+extern int do_clone(int clone_flags, struct pt_regs *parent_regs);
 extern int sys_user_getstat(const char * filename, void *stat);
 extern int sys_readdir(unsigned int fd, struct xos_dirent64 *dirent, unsigned int count);
 extern int do_sys_llseek(int fd,loff_t offset,int whence);
@@ -50,7 +54,8 @@ extern int do_sys_gettgid();
 extern int do_sys_execve(const char *pathname,char *const argv[],char *const envp[],
     struct pt_regs *regs);
 
-
+extern void do_sys_exit(int status);
+extern int do_sys_waitpid(int pid, int *status, int options);
 
 
 
