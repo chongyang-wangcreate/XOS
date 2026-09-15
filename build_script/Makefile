@@ -168,6 +168,7 @@ FS_OBJ = \
     fs/tmpfs/xos_tmpfs.o\
     fs/xos_vfs.o\
     fs/xos_char_dev.o\
+    fs/xos_block_dev.o\
     fs/xos_file.o \
     fs/xos_devfs.o \
     fs/readdir.o\
