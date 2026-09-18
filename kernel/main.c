@@ -84,8 +84,7 @@
 extern void * exce_vectors;
 extern void * k_bss_start;
 extern void * k_bss_end;
-extern uint64 __bss_start[];
-extern uint64 __bss_end[];
+
 
 #define wfi()       asm volatile("wfi" : : : "memory")
 

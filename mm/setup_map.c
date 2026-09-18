@@ -325,6 +325,11 @@ extern char _etext[];
 extern char _srodata[];
 extern char _erodata[];
 extern char _sdata[];
+extern char _edata[];
+extern char __init_begin[];
+extern char __init_end[];
+extern char __bss_start[];
+extern char __bss_end[];
 
 #define KERNEL_TEXT_PROT      (PG_RO_EL1 | ATTR_UXN)
 #define KERNEL_RODATA_PROT    (PG_RO_EL1 | ATTR_UXN | ATTR_PXN)
@@ -347,10 +352,17 @@ void xos_kernel_map(void)
 {
     xos_kernel_section_map(__text, _etext, KERNEL_TEXT_PROT);
     xos_kernel_section_map(_srodata, _erodata, KERNEL_RODATA_PROT);
-    xos_kernel_section_map(_sdata, kernel_end_phys_virt, KERNEL_DATA_PROT);
+    /*
+     * Keep the linker guard pages between .data, .bss and the reserved
+     * kernel area unmapped. Mapping one continuous range to kernel_end would
+     * turn those guard pages into ordinary writable pages.
+     */
+    xos_kernel_section_map(_sdata, _edata, KERNEL_DATA_PROT);
+    xos_kernel_section_map(__bss_start, __bss_end, KERNEL_DATA_PROT);
+    xos_kernel_section_map(__init_begin, __init_end, KERNEL_DATA_PROT);
     flush_tlb();
     printk(PT_ERROR, "Kernel section map finish\n");
-}
+}  
 
 void all_phys_linear_map(void)
 {
