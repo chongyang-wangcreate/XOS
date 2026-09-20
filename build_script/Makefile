@@ -73,7 +73,8 @@ BUILD_DIRS = \
     output/fs/tmpfs \
     output/drivers \
     output/drivers/console \
-    output/drivers/base
+    output/drivers/base\
+    output/drivers/block
 
 
 create_build_dirs = $(foreach dir,$(BUILD_DIRS),$(shell mkdir -p $(dir)))
@@ -120,7 +121,10 @@ DRIV_OBJ = \
     drivers/xos_bus.o \
     drivers/xos_driver.o \
     drivers/base/platform.o\
-    drivers/console/console.o 
+    drivers/console/console.o \
+    drivers/block/xos_partition.o \
+    drivers/block/xos_ramdisk.o \
+    drivers/block/xos_block_io.o
 
 MM_OBJ = \
     mm/setup_mm.o\
