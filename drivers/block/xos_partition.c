@@ -49,8 +49,8 @@
 #define XOS_GPT_ENTRY_SIZE 128U
 
 typedef struct xos_partition {
-    xos_block_device_t bdev;
-    xos_block_device_t *parent;
+    xos_blkdev_t bdev;
+    xos_blkdev_t *parent;
     uint64 start_sector;
     uint8 type;
     uint8 index;
@@ -104,7 +104,7 @@ static int xos_partition_name(char *name,
     return 0;
 }
 
-static int xos_partition_read(xos_block_device_t *bdev,
+static int xos_partition_read(xos_blkdev_t *bdev,
                               uint64 sector,
                               void *buffer,
                               uint32 sector_count)
@@ -121,7 +121,7 @@ static int xos_partition_read(xos_block_device_t *bdev,
                                      buffer, sector_count);
 }
 
-static int xos_partition_write(xos_block_device_t *bdev,
+static int xos_partition_write(xos_blkdev_t *bdev,
                                uint64 sector,
                                const void *buffer,
                                uint32 sector_count)
@@ -138,7 +138,7 @@ static int xos_partition_write(xos_block_device_t *bdev,
                                       buffer, sector_count);
 }
 
-static int xos_partition_flush(xos_block_device_t *bdev)
+static int xos_partition_flush(xos_blkdev_t *bdev)
 {
     xos_partition_t *partition;
 
@@ -150,13 +150,13 @@ static int xos_partition_flush(xos_block_device_t *bdev)
     return xos_blockdev_flush(partition->parent);
 }
 
-static const xos_block_device_ops_t xos_partition_ops = {
+static const xos_blkdev_ops_t xos_partition_ops = {
     .read_sectors = xos_partition_read,
     .write_sectors = xos_partition_write,
     .flush = xos_partition_flush,
 };
 
-static int xos_partition_overlaps(xos_block_device_t *parent,
+static int xos_partition_overlaps(xos_blkdev_t *parent,
                                   uint64 start_sector,
                                   uint64 sector_count)
 {
@@ -192,7 +192,7 @@ static xos_partition_t *xos_partition_alloc_slot(void)
     return NULL;
 }
 
-static int xos_partition_existing_count(xos_block_device_t *parent)
+static int xos_partition_existing_count(xos_blkdev_t *parent)
 {
     int count = 0;
     int i;
@@ -220,7 +220,7 @@ static void xos_partition_rollback(xos_partition_t **created, int count)
     }
 }
 
-static int xos_partition_register_one(xos_block_device_t *parent,
+static int xos_partition_register_one(xos_blkdev_t *parent,
                                        uint64 start_sector,
                                        uint64 sector_count,
                                        uint8 type,
@@ -294,7 +294,7 @@ int xos_partition_init(void)
     return 0;
 }
 
-int xos_mbr_scan(xos_block_device_t *parent)
+int xos_mbr_scan(xos_blkdev_t *parent)
 {
     xos_partition_t *created[XOS_MBR_PRIMARY_PARTITIONS];
     uint8 mbr[XOS_MBR_SIZE];
@@ -378,7 +378,7 @@ fail:
     entries.  Each entry has a 16-byte partition type GUID; if it is
     not all zeros, the entry is in use.
 */
-int xos_gpt_scan(xos_block_device_t *parent)
+int xos_gpt_scan(xos_blkdev_t *parent)
 {
     xos_partition_t *created[XOS_PARTITION_MAX];
     uint8 header_buf[XOS_BLOCKDEV_DEFAULT_SECTOR_SIZE];
@@ -492,7 +492,7 @@ fail:
     Unified partition scan: try GPT first, fall back to MBR.
     Returns the number of partitions found (>= 0) or negative error.
 */
-int xos_partition_scan(xos_block_device_t *parent)
+int xos_partition_scan(xos_blkdev_t *parent)
 {
     int ret;
 
@@ -530,7 +530,7 @@ int xos_partition_count(void)
     return count;
 }
 
-int xos_partition_remove(xos_block_device_t *parent)
+int xos_partition_remove(xos_blkdev_t *parent)
 {
     int removed = 0;
     int i;
@@ -554,7 +554,7 @@ int xos_partition_remove(xos_block_device_t *parent)
     return removed;
 }
 
-void xos_partition_dump(xos_block_device_t *parent)
+void xos_partition_dump(xos_blkdev_t *parent)
 {
     int i;
 
