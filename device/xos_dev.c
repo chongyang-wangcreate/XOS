@@ -33,8 +33,12 @@
 #include "xos_kobj.h"
 #include "xos_kern_def.h"
 #include "xos_char_dev.h"
+#include "xos_block_dev.h"
 #include "xos_dev.h"
 #include "xos_bus.h"
+#include "xos_partition.h"
+#include "xos_ramdisk.h"
+
 
 extern int console_init();
 static dlist_t xos_device_register;
@@ -121,9 +125,47 @@ void init_char_dev()
     console_init();
 }
 
-void init_block_dev()
-{
+/*
+    Block device subsystem initialization.
 
+    Call order:
+      1. xos_blockdev_init()   — initialize the block device registry
+      2. xos_partition_init()  — initialize the partition table parser
+
+    I/O scheduler (elevator):
+      xos_block_io_queue is now integrated into xos_blkdev_t.
+      Each registered block device gets its own request queue, initialized
+      automatically in xos_blockdev_register().  The queue supports:
+        - SCAN elevator (bidirectional, minimizes seek)
+        - Deadline-based priority dispatch (prevents starvation)
+        - Adjacent request merging (reduces per-sector overhead)
+      Current execution is synchronous via xos_blockdev_dispatch_io().
+      When interrupt-driven async I/O is added, dispatch will move to a
+      workqueue / softirq context.
+
+      - gen_disk / gendisk layer:  xos_blockdev_add_disk() combines
+        device registration + automatic partition scan (GPT/MBR).
+        Individual drivers call add_disk when their hardware is ready,
+        not here.  This function only sets up the infrastructure.
+*/
+int init_block_dev()
+{
+    int ret;
+    ret = xos_blockdev_init();
+    if(ret < 0){
+        return ret;
+    }
+    ret = xos_partition_init();
+    if(ret < 0){
+        return ret;
+    }
+
+    ret = xos_ramdisk_init();
+    if(ret < 0){
+        printk(PT_ERROR, "ramdisk init failed (ret=%d)\n", ret);
+        return ret;
+    }
+    return 0;
 }
 
 int xos_init_deivices()

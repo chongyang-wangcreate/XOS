@@ -2,6 +2,7 @@
 #define __FS_H__
 
 #include "stat.h"
+#include "bit_map.h"
 #include "arch64_timer.h"
 
 typedef unsigned long size_t;
