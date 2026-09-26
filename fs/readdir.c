@@ -106,7 +106,7 @@ int copy_dir_msg_to_user(void * __buf, const char * name, int namelen, long offs
 
     dirent = buf->dirent_slab.prev_dir;
     if(dirent){
-        if(!copy_to_user(&dirent->d_off,&offset,sizeof(long))){
+        if(copy_to_user(&dirent->d_off,&offset,sizeof(long)) != 0){
             buf->error = -EFAULT;
             return -EFAULT;
         }
@@ -115,11 +115,11 @@ int copy_dir_msg_to_user(void * __buf, const char * name, int namelen, long offs
     dirent = buf->dirent_slab.current_dir;
     reclen_short = (unsigned short)reclen;
     dtype = (unsigned char)d_type;
-    if(!copy_to_user(&dirent->d_ino,&fnode_num,sizeof(long))||
-       !copy_to_user(&dirent->d_reclen,&reclen_short,sizeof(short))||
-       !copy_to_user(&dirent->d_type,&dtype,sizeof(unsigned char))||
-       !copy_to_user(dirent->d_name,name,namelen)||
-       !copy_to_user(&dirent->d_name[namelen],&nul,sizeof(char))){
+    if(copy_to_user(&dirent->d_ino,&fnode_num,sizeof(long)) != 0||
+       copy_to_user(&dirent->d_reclen,&reclen_short,sizeof(short)) != 0||
+       copy_to_user(&dirent->d_type,&dtype,sizeof(unsigned char)) != 0||
+       copy_to_user(dirent->d_name,name,namelen) != 0||
+       copy_to_user(&dirent->d_name[namelen],&nul,sizeof(char)) != 0){
         buf->error = -EFAULT;
         return -EFAULT;
     }
@@ -191,7 +191,7 @@ int sys_readdir(unsigned int fd, struct xos_dirent64 *dirent, unsigned int buf_s
     if (buf.dirent_slab.last_dir) 
     {
         printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
-        if (!copy_to_user(&buf.dirent_slab.last_dir->d_off,&filp->f_pos,sizeof(long))) /*need chang to do*/
+        if (copy_to_user(&buf.dirent_slab.last_dir->d_off,&filp->f_pos,sizeof(long)) != 0) /*need chang to do*/
             ret = -EFAULT;
         else
             ret = buf_size - buf.count;

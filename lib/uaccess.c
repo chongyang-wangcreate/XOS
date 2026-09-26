@@ -42,10 +42,11 @@ int check_addr_is_legal(void *vaddr)
         遍历vma 查看是否位于某个有效的vma
     */
     struct vm_area_struct *iter = tmp_mmap;
-    while(iter->vm_prev){
+    while(iter){
         if (iter->vm_start <= u_vaddr && u_vaddr < iter->vm_end){
             return 1;
         }
+        iter = iter->vm_next;
     }
     return 0;
 }
@@ -58,13 +59,14 @@ int check_addr_is_writable(void *vaddr)
         遍历vma 查看是否位于某个有效的vma
     */
     struct vm_area_struct *iter = tmp_mmap;
-    while(iter->vm_prev){
+    while(iter){
         if (iter->vm_start <= u_vaddr && u_vaddr < iter->vm_end){
-           break;
+            if(iter->vm_flags &VM_WRITE){
+                return 1;
+            }
+            return 0;
         }
-    }
-    if(iter->vm_flags &VM_WRITE){
-        return 1;
+        iter = iter->vm_next;
     }
     return 0;
 }
@@ -77,13 +79,14 @@ int check_addr_is_readable(void *vaddr)
         遍历vma 查看是否位于某个有效的vma
     */
     struct vm_area_struct *iter = tmp_mmap;
-    while(iter->vm_prev){
+    while(iter){
         if (iter->vm_start <= u_vaddr && u_vaddr < iter->vm_end){
-           break;
+            if(iter->vm_flags &VM_READ){
+                return 1;
+            }
+            return 0;
         }
-    }
-    if(iter->vm_flags &VM_READ){
-        return 1;
+        iter = iter->vm_next;
     }
     return 0;
 }
@@ -120,8 +123,18 @@ static int user_range_in_vma(void *vaddr ,unsigned long size,int need_write)
 unsigned long copy_from_user(void *to ,const void *from,unsigned long size)
 {
     /*
-        to do
+        1. from in valid vma range
+        2. from Does the VMA where from is located have read permission
+
+        from：指向用户空间的源数据地址的指针。
+        to：指向内核空间的目标内存地址的指针。
+        size：要复制的字节数。
+        返回值：返回未成功复制的字节数
     */
+    if(!user_range_in_vma((void *)from, size, 0)){
+        return size;
+    }
+    memcpy(to, from, size);
     return 0;
 }
 
@@ -153,9 +166,9 @@ unsigned long copy_to_user(void *to ,const void *from,unsigned long size)
         return 0;
     }*/
     if(!user_range_in_vma(to,size,1)){
-        return 0;
+        return size;
     }
     memcpy(to,from,size);
-    return size;
+    return 0;
 }
 

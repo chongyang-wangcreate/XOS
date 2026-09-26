@@ -71,6 +71,7 @@ BUILD_DIRS = \
     output/fs \
     output/fs/sysfs \
     output/fs/tmpfs \
+    output/fs/ext4 \
     output/drivers \
     output/drivers/console \
     output/drivers/base\
@@ -175,6 +176,7 @@ FS_OBJ = \
     fs/xos_block_dev.o\
     fs/xos_file.o \
     fs/xos_devfs.o \
+    fs/ext4/xos_ext4.o \
     fs/readdir.o\
     fs/stat.o\
     fs/sysfs/sys_mkdir.o\

@@ -7,7 +7,7 @@
 typedef struct xos_char_dev{
 
     dlist_t char_dev_list;/*字符设备链表头*/
-    xdriver_t  device;    /*设备基类*/
+    xdevice_t  device;    /*设备基类*/
     struct xos_file_ops  *char_ops; /*操作函数集*/
     devno_t devnum;
     int ref_count;  //设备数量

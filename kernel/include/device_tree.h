@@ -3,7 +3,7 @@
 
 #include "types.h"
 
-#define XOS_DTB_MAX_NODES  64
+#define XOS_DTB_MAX_NODES  128
 #define XOS_DTB_MAX_DEPTH  16
 #define XOS_DTB_MAX_REGS   4
 #define XOS_DTB_MAX_IRQS   8
@@ -123,6 +123,8 @@ extern void xos_dtb_set_boot_phys(uint64 phys);
 extern int xos_dtb_init(void);
 extern int xos_parse_dtb(void);
 extern xos_dtb_node_t *xos_get_node_by_compatible(const char *compatible);
+extern xos_dtb_node_t *xos_get_node_by_compatible_index(
+    const char *compatible, uint32 index);
 extern xos_dtb_node_t *xos_get_node_by_phandle(uint32 phandle);
 int xos_dtb_node_is_compatible(const xos_dtb_node_t *node,const char *compatible);
 int xos_dtb_get_irq(const xos_dtb_node_t *node,uint32 index,uint32 *irq);

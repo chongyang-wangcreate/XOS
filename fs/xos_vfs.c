@@ -39,6 +39,7 @@
 //#include "xos_fs_types.h"
 
 extern void fs_list_init();
+extern void init_ext4fs();
 
 
 /*
@@ -71,6 +72,7 @@ void  init_file_sys()
     init_ramfs();  /*初始化根文件系统到系统*/
     init_tmpfs();
     init_devfs();
+    init_ext4fs();
 }
 
 int xos_vfs_init()
