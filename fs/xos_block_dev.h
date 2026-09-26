@@ -165,7 +165,7 @@ typedef struct xos_block_request_desc{
 typedef struct xos_block_request_queue_desc{
 
     int (*merge_requests) (struct xos_block_request_queue_desc *, xos_blk_req_t *,
-				 struct blk_request *);
+				xos_blk_req_t *);
 
 	int (*sumit_request)(struct xos_block_request_queue_desc *queue, xos_block_io_queue_t *bio);
 

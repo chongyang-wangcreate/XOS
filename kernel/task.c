@@ -434,7 +434,7 @@ static int xos_thread_create_internal(int cpuid, unsigned int prio,
     list_init(&child->delay_list);
     list_init(&child->wait_list);
     list_init(&child->mutex_list);
-    init_fs_context(NULL, child);
+    init_fs_context(parent, child);
     memset(&child->files_set.fd_set,0,sizeof(child->files_set.fd_set));
     child->files_set.fd_map.bit_start = (uint8_t*)child->files_set.fd_set;
     child->files_set.fd_map.btmp_bytes_len = sizeof(child->files_set.fd_set);
