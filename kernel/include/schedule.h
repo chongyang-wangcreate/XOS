@@ -47,6 +47,8 @@ extern void int_schedule(void);
 extern void load_first_task();
 extern void handle_task_timerslice(int cpuid);
 extern int sched_select_cpu(int preferred_cpuid);
+extern int sched_task_cpu_allowed(const struct task_struct *task, int cpuid);
+extern int sched_task_cpu_bound(const struct task_struct *task, int cpuid);
 extern int sched_select_task_cpu(const struct task_struct *task,
                                  int preferred_cpuid);
 extern int sched_balance_idle_cpu(int cpuid);

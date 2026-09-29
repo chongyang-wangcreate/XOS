@@ -94,6 +94,7 @@ void sem_post(xsem_t *sem)
     dlist_t *cur_node;
     dlist_t *list_head;
     struct task_struct *curr;
+    int cpuid;
     /*
         释放信号量
         检查wait_list_head 是否为空，如果为空ref_count 值增加
@@ -111,12 +112,16 @@ void sem_post(xsem_t *sem)
         list_head = &sem->wait_list_head;
         list_for_each(cur_node,list_head){
             curr = list_entry(cur_node, struct task_struct, sem_list);
+            cpuid = sched_select_task_cpu(curr, curr->cpuid);
+            if(cpuid < 0){
+                continue;
+            }
             list_del(&curr->sem_list); //从等待链表中删除
             /*
                 wakeup
             */
             curr->state = TSTATE_READY;  //被调度时任务状态由READY 转为RUNNING
-            add_to_cpu_runqueue(cur_cpuid(),curr);
+            add_to_cpu_runqueue(cpuid,curr);
             #if 0
             暂时先不删除，重构代码验证通过后再删除
             list_add_back(&curr->cpu_list, &cpu_array[cur_cpuid()].runqueue[curr->prio].run_list);
@@ -126,4 +131,5 @@ void sem_post(xsem_t *sem)
     }
     xos_unspinlock(&sem->lock);
 }
+
 

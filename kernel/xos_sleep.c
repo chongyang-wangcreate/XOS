@@ -134,17 +134,11 @@ void xos_sleep_timerout(struct timer_struct *timer, void *arg)
         return ;
     }
 
-    l_cur_task->state = TSTATE_READY;
-    cpuid = l_cur_task->cpuid;
-    if(!(l_cur_task->sched_flags & TASK_SCHED_PINNED)){
-        cpuid = sched_select_task_cpu(l_cur_task, cpuid);
-    }else if(cpuid < 0 || cpuid >= CPU_NR ||
-             !cpu_array[cpuid].cpu_online){
-        cpuid = sched_select_cpu(cur_cpuid());
-    }
+    cpuid = sched_select_task_cpu(l_cur_task, l_cur_task->cpuid);
     if(cpuid < 0){
         return;
     }
+    l_cur_task->state = TSTATE_READY;
     add_to_cpu_runqueue(cpuid,l_cur_task);
     #if 0
     cpu_array[cur_cpuid()].run_count[l_cur_task->prio]++;/*2024.405 am:9:23*/
@@ -157,6 +151,7 @@ void xos_sleep_timerout(struct timer_struct *timer, void *arg)
     }
     
 }
+
 
 
 void xos_sleep_ticks(u64 ticks)

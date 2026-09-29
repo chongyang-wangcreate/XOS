@@ -280,7 +280,7 @@ static uint64 sched_online_cpu_mask(void)
     return mask;
 }
 
-static int sched_task_cpu_allowed(const struct task_struct *task, int cpuid)
+int sched_task_cpu_allowed(const struct task_struct *task, int cpuid)
 {
     uint64 allowed;
 
@@ -292,6 +292,23 @@ static int sched_task_cpu_allowed(const struct task_struct *task, int cpuid)
         allowed = sched_online_cpu_mask();
     }
     return (allowed & (1ULL << cpuid)) != 0;
+}
+
+int sched_task_cpu_bound(const struct task_struct *task, int cpuid)
+{
+    if(task == NULL || cpuid < 0 || cpuid >= CPU_NR){
+        return 0;
+    }
+
+    printk(PT_DEBUG,"%s:%d,cpuid=%d\n\r",__FUNCTION__,__LINE__,cpuid);
+    /*
+     * cpuid only records the task's current runqueue.  A hard binding
+     * requires the pinned flag, a one-bit affinity mask, and matching
+     * current CPU ownership.
+     */
+    return (task->sched_flags & TASK_SCHED_PINNED) &&
+           task->cpuid == cpuid &&
+           task->cpus_allowed == (1ULL << cpuid);
 }
 
 int sched_select_cpu(int preferred_cpuid)
@@ -387,6 +404,23 @@ int sched_select_task_cpu(const struct task_struct *task,
     int possible = xos_cpu_possible_count();
     int cpuid;
 
+    if(task == NULL){
+        return -1;
+    }
+    printk(PT_DEBUG,"%s:%d,preferred_cpuid=%d\n\r",__FUNCTION__,__LINE__,preferred_cpuid);
+    if(sched_task_cpu_bound(task, task->cpuid)){
+        cpuid = task->cpuid;
+        if(cpuid >= 0 && cpuid < possible &&
+           cpu_array[cpuid].possible && cpu_array[cpuid].cpu_online &&
+           sched_task_cpu_allowed(task, cpuid)){
+            return cpuid;
+        }
+        return -1;
+    }
+    if(task->sched_flags & TASK_SCHED_PINNED){
+        return -1;
+    }
+
     for(cpuid = 0; cpuid < possible; cpuid++){
         cpu_desc_t *rq;
         int load;
@@ -395,7 +429,7 @@ int sched_select_task_cpu(const struct task_struct *task,
            !sched_task_cpu_allowed(task, cpuid)){
             continue;
         }
-
+        printk(PT_DEBUG,"%s:%d,cpuid=%d\n\r",__FUNCTION__,__LINE__,cpuid);
         rq = &cpu_array[cpuid];
         xos_spinlock(&rq->lock);
         load = sched_rq_load(rq);
@@ -410,22 +444,57 @@ int sched_select_task_cpu(const struct task_struct *task,
     return best_cpu;
 }
 
-static struct task_struct *sched_find_migratable(cpu_desc_t *rq,
+static int sched_task_migratable(const struct task_struct *task,
+                                 cpu_desc_t *rq, int dst_cpuid)
+{
+    const sched_class_t *class;
+
+    if(task == NULL || rq == NULL || task == rq->cur_task ||
+       task->cpuid != rq->cpuid || task->state != TSTATE_READY ||
+       task->on_cpu || task->migration_disabled ||
+       task->migration_pending ||
+       sched_task_cpu_bound(task, rq->cpuid) ||
+       (task->sched_flags & TASK_SCHED_PINNED) ||
+       !sched_task_cpu_allowed(task, dst_cpuid)){
+        return 0;
+    }
+    printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
+    class = task_get_sched_class(task);
+    return class != NULL && class->ops != NULL &&
+           class->ops->dequeue_task != NULL &&
+           class->ops->enqueue_task != NULL;
+}
+
+static struct task_struct *sched_find_migratable_task(cpu_desc_t *rq,
                                                  int dst_cpuid)
 {
     dlist_t *head;
     dlist_t *node;
+    struct task_struct *task;
     int prio;
 
-    for(prio = 0; prio < PRIO_MAX; prio++){
+    if(rq == NULL || dst_cpuid < 0 || dst_cpuid >= CPU_NR ||
+       !cpu_array[dst_cpuid].possible || !cpu_array[dst_cpuid].cpu_online){
+        return NULL;
+    }
+
+    /*
+     * Migrate lower-priority tasks first.  A scheduler queue is ordered
+     * from the lowest numeric priority .
+     */
+    for(prio = PRIO_MAX - 1; prio >= 0; prio--){
         head = &rq->runqueue[prio].run_list;
         list_for_each(node, head){
-            struct task_struct *task =
-                list_entry(node, struct task_struct, cpu_list);
-            if(task != rq->cur_task && task->state == TSTATE_READY &&
-               !task->on_cpu && !task->migration_disabled &&
-               !(task->sched_flags & TASK_SCHED_PINNED) &&
-               sched_task_cpu_allowed(task, dst_cpuid)){
+            task = list_entry(node, struct task_struct, cpu_list);
+            if(sched_task_migratable(task, rq, dst_cpuid)){
+                return task;
+            }
+        }
+        printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
+        head = &rq->rt_runqueue[prio].run_list;
+        list_for_each(node, head){
+            task = list_entry(node, struct task_struct, cpu_list);
+            if(sched_task_migratable(task, rq, dst_cpuid)){
                 return task;
             }
         }
@@ -466,8 +535,15 @@ static int sched_balance_pair(int src_cpuid, int dst_cpuid)
         return 0;
     }
 
-    task = sched_find_migratable(src, dst_cpuid);
+    task = sched_find_migratable_task(src, dst_cpuid);
     if(task == NULL){
+        xos_unspinlock(&second->lock);
+        xos_unspinlock(&first->lock);
+        arch_local_irq_restore(flags);
+        return 0;
+    }
+
+    if(!sched_task_migratable(task, src, dst_cpuid)){
         xos_unspinlock(&second->lock);
         xos_unspinlock(&first->lock);
         arch_local_irq_restore(flags);
@@ -1062,4 +1138,3 @@ int wake_up_proc(struct task_struct *tsk)
     xos_unspinlock(&g_wakeup_lock);
     return 0;
 }
-

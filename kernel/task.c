@@ -209,13 +209,25 @@ void task_unregister(struct task_struct *task)
 
 void add_to_cpu_runqueue(int cpuid,struct task_struct *task)
 {
-    const sched_class_t *class = task_get_sched_class(task);
-    cpu_desc_t *rq = task_cpu_rq(cpuid);
+    const sched_class_t *class;
+    cpu_desc_t *rq;
     struct task_struct *curr;
     unsigned long flags;
     int remote_reschedule = 0;
 
-    if(rq == NULL || class == NULL || class->ops == NULL || class->ops->enqueue_task == NULL || !task_prio_valid(task)){
+    if(task == NULL){
+        return;
+    }
+
+    class = task_get_sched_class(task);
+    rq = task_cpu_rq(cpuid);
+    if(rq == NULL || !rq->possible || !rq->cpu_online ||
+       !sched_task_cpu_allowed(task, cpuid) ||
+       class == NULL || class->ops == NULL ||
+       class->ops->enqueue_task == NULL || !task_prio_valid(task)){
+        printk(PT_ERROR, "%s: reject task=%p cpu=%d allowed=%lx flags=%x\n\r",
+               __func__, task, cpuid, task->cpus_allowed,
+               task->sched_flags);
         return;
     }
 
@@ -258,6 +270,7 @@ void add_to_cpu_runqueue(int cpuid,struct task_struct *task)
     }
     
 }
+
 
 void del_from_cpu_runqueue(int cpuid,struct task_struct *task)
 {
