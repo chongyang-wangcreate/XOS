@@ -28,6 +28,19 @@ int xfs_type_register(xvfs_file_t *fs_type)
     dlist_t *ltmp_node;
     dlist_t *head = &g_fs_list;
     xvfs_file_t *fs_tmp_node;
+
+    if (fs_type == NULL || fs_type->fs_type == NULL ||
+        fs_type->fs_type[0] == '\0') {
+        return -EINVAL;
+    }
+    if (fs_type->mount == NULL && fs_type->init_file_system == NULL) {
+        return -EINVAL;
+    }
+    if ((fs_type->fs_flags & XOS_FS_REQUIRES_BLOCK) &&
+        (fs_type->fs_flags & XOS_FS_NODEV)) {
+        return -EINVAL;
+    }
+
     list_for_each(ltmp_node, head){
         fs_tmp_node = list_entry(ltmp_node, xvfs_file_t, vfs_list);
         if(strcmp(fs_tmp_node->fs_type,fs_type->fs_type) == 0){

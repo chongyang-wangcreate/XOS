@@ -158,6 +158,7 @@ xfile_ops_t devfs_dir_file_ops = {
 
 void devfs_super_init(xsuperblock * super,int flags,void *data)
 {
+    memset(super, 0, sizeof(*super));
     super->block_size = PAGE_SIZE;
     super->mount_behavior = flags;
     super->maigc = DEVFS_MAGIC;
@@ -352,8 +353,8 @@ void xos_release_devfs(xsuperblock *super)
 
 xvfs_file_t  devfs ={
     .fs_type = "devfs",
+    .fs_flags = XOS_FS_NODEV,
     .init_file_system = xos_init_devfs,
-    .init_file_system_old = init_file_devfs_old,
     .release_file_system = xos_release_devfs,
 
 };
@@ -362,5 +363,3 @@ void init_devfs()
 {
     xfs_type_register(&devfs);
 }
-
-

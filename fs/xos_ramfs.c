@@ -64,6 +64,12 @@ int ramfs_new_fnode(xinode *parent_node, xdentry *dentry_cache,
 	int mode, devno_t dev);
 
 xsuperblock *init_file_ramfs(struct xos_vfs_file_type *fs_name,int flags,const char *dev_name,void *data);
+int xos_ramfs_mount(struct xos_vfs_file_type *fs_name,
+                struct xos_block_device *bdev,
+                int flags,
+                const char *dev_name,
+                void *data,
+                xsuperblock **out_super);
 void release_ramfs(xsuperblock *super);
 int init_file_ramfs_old(struct xos_vfs_file_type *fs_name,int flags,const char *dev_name,void *data,xdentry **root_dentry);
 
@@ -258,8 +264,9 @@ xfile_ops_t simple_dir_ops = {
 
 xvfs_file_t  ramfs={
     .fs_type = "rootfs",
+    .fs_flags = XOS_FS_NODEV,
+//    .mount =    xos_ramfs_mount,
     .init_file_system = init_file_ramfs,
-    .init_file_system_old = init_file_ramfs_old,
     .release_file_system = release_ramfs,
 
 };
@@ -382,6 +389,7 @@ xdentry *alloc_ramfs_dentry_init(xdentry_name *name)
 }
 void ramfs_super_init(xsuperblock * super,int flags,void *data)
 {
+    memset(super, 0, sizeof(*super));
     super->block_size = PAGE_SIZE;
     super->mount_behavior = flags;
     super->maigc = RAMFS_MAGIC;
@@ -390,6 +398,18 @@ void ramfs_super_init(xsuperblock * super,int flags,void *data)
     super->ref_count = 1;
     xos_spinlock_init(&super->lock);
     
+}
+
+
+int xos_ramfs_mount(struct xos_vfs_file_type *fs_name,
+                struct xos_block_device *bdev,
+                int flags,
+                const char *dev_name,
+                void *data,
+                xsuperblock **out_super)
+{
+
+    return 0;
 }
 /*
     主要工作申请对应文件系统的superblock inode  ,dentry初始化
@@ -518,4 +538,5 @@ void init_ramfs()
 {
     xfs_type_register(&ramfs);
 }
+
 

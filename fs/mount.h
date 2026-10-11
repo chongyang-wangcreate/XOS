@@ -134,6 +134,7 @@ extern int get_trav_start_path(char *mount_dir, lookup_path_t *lpath);
 extern void  init_mount_cache(void);
 extern int mount_rootfs(const char *fs_name,int mode,char *mount_path,char *dev_name,void *data);
 extern int do_mount(const char *fs_name,int mode,char *mount_path,char *dev_name,void *data);
+extern void xos_mount_put_superblock(xsuperblock *super);
 extern xmount_t *lookup_mnt(xmount_t *mnt, xdentry *filenode_cache);
 extern  void set_pwd(x_task_fs *fs, xmount_t *mnt,xdentry *dentry_cache);
 #endif

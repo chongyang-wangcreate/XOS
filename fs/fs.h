@@ -153,6 +153,8 @@ struct xos_file_ops;
 struct fs_path_lookup;
 struct xos_dentry;
 struct xos_superblock;
+struct xos_block_device;
+struct xos_vfs_file_type;
 
 #include "xos_char_dev.h"
 #include "xos_path.h"
@@ -177,17 +179,25 @@ typedef struct super_block_operation{
     
     struct xos_inode *(*alloc_inode)(struct xos_superblock *sb);
     void (*destroy_inode)(struct xos_inode *);
+    int (*sync_fs)(struct xos_superblock *sb);
+//    void (*distory_super)(struct xos_superblock *sb);
+    /*chage distory_super to put_super*/
+    void (*put_super)(struct xos_superblock *sb);
 }super_block_ops;
 
 typedef struct xos_superblock{
     u32 maigc;        /*识别区分具体的文件系统*/
     u32 block_size;   /*当前文件系统数据块大小*/
+    u32 block_bits;
+    uint64 max_file_size;
     dev_t s_dev;      /*文件系统对应的设备号*/
     u32 ref_count;   /*被引用计数*/
     dlist_t super_list; /*可以链入文件系统集合，不止一种文件系统*/
     struct xos_dentry *root_dentry;/*当前文件系统的根dentry*/
     super_block_ops *super_ops;/*操作函数集*/
-    void *real_fs_super;/*similar void *private */
+    void *private_data;
+    struct xos_vfs_file_type *fs_type;
+    struct xos_block_device *block_device;
     xos_spinlock_t  lock;  /*防止多进程竞争冲突问题*/
     dlist_t inode_list; /*和inode 节点关联*/
     int mount_behavior;
@@ -411,8 +421,3 @@ extern xdentry *lookup_dentry_in_pdentry(path_name_t *name, xdentry * p_dir,look
 extern int resolve_path(char *mount_path, int flags,  lookup_path_t *look_path);
 
 #endif
-
-
-
-
-

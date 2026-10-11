@@ -46,6 +46,7 @@
 #include "mount.h"
 #include "task.h"
 #include "xos_vfs.h"
+#include "xos_block_dev.h"
 #include "path.h"
 
 xmount_t *mount_cache_ptr = NULL;
@@ -165,56 +166,192 @@ void set_root(x_task_fs *fs, xmount_t *mnt,xdentry *dentry_cache)
     xos_unspinlock(&fs->lock);
 }
 
-
-xmount_t * do_inner_mount(xvfs_file_t *fs, int mnt_flags, const char *dev_name, void *data)
+static int xos_mount_get_super(xvfs_file_t *fs,
+                               int flags,
+                               const char *dev_name,
+                               void *data,
+                               xsuperblock **out_super)
 {
-    int error_code;
+    xos_block_device_t *bdev = NULL;
+    xsuperblock *super = NULL;
+    int ret;
+
+    if (fs == NULL || out_super == NULL) {
+        return -EINVAL;
+    }
+    *out_super = NULL;
+
+    if (fs->fs_flags & XOS_FS_REQUIRES_BLOCK) {
+        if (dev_name == NULL || dev_name[0] == '\0') {
+            return -EINVAL;
+        }
+        bdev = xos_blockdev_get_by_name(dev_name);
+        if (bdev == NULL) {
+            return -ENODEV;
+        }
+        if (bdev->flags & XOS_BLOCKDEV_READ_ONLY) {
+            flags |= SB_RDONLY;
+        }
+    }
+
+    if (fs->mount != NULL) {
+        ret = fs->mount(fs, bdev, flags, dev_name, data, &super);
+    } else if (fs->init_file_system != NULL) {
+        super = fs->init_file_system(fs, flags, dev_name, data);
+        ret = super == NULL ? -EIO : 0;
+    } else {
+        ret = -ENOSYS;
+    }
+
+    if (ret < 0 || super == NULL || super->root_dentry == NULL) {
+        if (super != NULL && fs->release_file_system != NULL) {
+            fs->release_file_system(super);
+        }
+        if (bdev != NULL) {
+            xos_blockdev_put(bdev);
+        }
+        return ret < 0 ? ret : -EINVAL;
+    }
+
+    super->fs_type = fs;
+    super->block_device = bdev;
+    super->s_dev = bdev == NULL ? 0 : bdev->devno;
+    super->mount_behavior |= flags;
+    super->root_dentry->xsb = super;
+    *out_super = super;
+    return 0;
+}
+
+
+void xos_put_superblock(xsuperblock *super)
+{
+    xos_block_device_t *bdev;
+    xvfs_file_t *fs;
+
+    if (super == NULL) {
+        return;
+    }
+
+    bdev = super->block_device;
+    fs = super->fs_type;
+    if (super->super_ops != NULL && super->super_ops->sync_fs != NULL) {
+        super->super_ops->sync_fs(super);
+    }
+    if (super->super_ops != NULL && super->super_ops->put_super != NULL) {
+        super->super_ops->put_super(super);
+    } else if (fs != NULL && fs->release_file_system != NULL) {
+        fs->release_file_system(super);
+    }
+    if (bdev != NULL) {
+        xos_blockdev_put(bdev);
+    }
+}
+
+
+void xos_destory_superblock(xsuperblock *super)
+{
+    xos_block_device_t *bdev;
+    xvfs_file_t *fs;
+
+    if (super == NULL) {
+        return;
+    }
+
+    bdev = super->block_device;
+    fs = super->fs_type;
+    if (super->super_ops != NULL && super->super_ops->sync_fs != NULL) {
+        super->super_ops->sync_fs(super);
+    }
+    if (super->super_ops != NULL && super->super_ops->put_super != NULL) {
+        super->super_ops->put_super(super);
+    } else if (fs != NULL && fs->release_file_system != NULL) {
+        fs->release_file_system(super);
+    }
+    if (bdev != NULL) {
+        xos_blockdev_put(bdev);
+    }
+}
+
+
+static int xos_create_mount(xvfs_file_t *fs,
+                            int fs_flags,
+                            int mnt_flags,
+                            const char *dev_name,
+                            void *data,
+                            xmount_t **out_mount)
+{
     xmount_t *mnt;
     xsuperblock *xsb;
+    int ret;
+
+    if (out_mount == NULL) {
+        return -EINVAL;
+    }
+    *out_mount = NULL;
+
     mnt = xmount_cache_alloc();
     if(mnt == NULL){
-        fs->init_ret = -ENOMEM;
-        return NULL;
+        return -ENOMEM;
     }
     printk(PT_RUN,"%s:%d,mnt_addr=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)mnt);
+    mnt->dev_name = NULL;
+    mnt->x_super = NULL;
+    mnt->root_dentry = NULL;
+    mnt->fs_root = NULL;
+    mnt->mount_parent = NULL;
+    mnt->mount_point = NULL;
+    mnt->mount_point_parent = NULL;
+    mnt->ref_count = 1;
+    mnt->mnt_flags = mnt_flags;
     list_init(&mnt->link_children_list);
     list_init(&mnt->link_parent_list);
     list_init(&mnt->hash_list);
     xos_spinlock_init(&mnt->mnt_lock);
-    mnt->dev_name = xos_kmalloc(strlen(dev_name)+1);
-    xos_spinlock(&mnt_lock);
-    strncpy(mnt->dev_name, dev_name, strlen(dev_name));
-    mnt->dev_name[strlen(dev_name)] = 0;
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
-    /*
-
-        init_file_system_old(fs,flags,dev_name,data,&root_dentry)
-        init_file_system 需要确保失败是没有资源泄漏
-    */
-    xsb = fs->init_file_system(fs,mnt_flags,dev_name,data);
-    if(xsb == NULL){
-        mnt->alloc_count = 0;
-        error_code = EINIT_FFAIL;
-        xos_unspinlock(&mnt_lock);
-        goto init_file_fail;
+    if (dev_name != NULL) {
+        mnt->dev_name = xos_kmalloc(strlen(dev_name) + 1);
+        if (mnt->dev_name == NULL) {
+            ret = -ENOMEM;
+            goto fail;
+        }
+        strcpy(mnt->dev_name, dev_name);
     }
-    mnt->x_super = xsb;
-    mnt->root_dentry = xsb->root_dentry;  /*当前文件系统的根dentry*/
-    printk(PT_RUN," %s:%d,xsb->root_dentry->file_name.path_name=%s\n\r",__FUNCTION__,__LINE__,xsb->root_dentry->file_name.path_name);
-    /*
-        xsb->root_dentry->ref_count++;
-        需原子操作
-    */
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
-    mnt->mount_point = xsb->root_dentry;   /*临时值,这个值需要更改*/
-    xos_unspinlock(&mnt_lock);
-    return mnt;
-init_file_fail:
-    xmount_cache_free(mnt);
-    fs->init_ret = error_code;
 
-    return NULL;
-    
+    ret = xos_mount_get_super(fs, fs_flags, dev_name, data, &xsb);
+    if (ret < 0) {
+        goto fail;
+    }
+
+    mnt->x_super = xsb;
+    mnt->root_dentry = xsb->root_dentry;
+    mnt->fs_root = xsb->root_dentry;
+    mnt->mount_point = xsb->root_dentry;
+    *out_mount = mnt;
+    return 0;
+
+fail:
+    if (mnt->dev_name != NULL) {
+        xos_kfree(mnt->dev_name);
+        mnt->dev_name = NULL;
+    }
+    xmount_cache_free(mnt);
+    return ret;
+}
+
+static void xos_destroy_mount(xmount_t *mnt)
+{
+    if (mnt == NULL) {
+        return;
+    }
+    if (mnt->x_super != NULL) {
+    //    xos_desctory_superblock(mnt->x_super);
+        xos_put_superblock(mnt->x_super);
+        mnt->x_super = NULL;
+    }
+    if (mnt->dev_name != NULL) {
+        xos_kfree(mnt->dev_name);
+        mnt->dev_name = NULL;
+    }
+    xmount_cache_free(mnt);
 }
 
 
@@ -375,30 +512,28 @@ int  attach_parent_mount(xmount_t *new_mnt,lookup_path_t *look_res, int mnt_flag
 }
 
 
-/*
-    1. init_file_system 不同的文件系统操作不同
-        1.1 dev需要设备
-        1.2 nodev不需要设备
-   2. do_inner_mount 接口需要做一些更改，为了能在失败时知道错误原因
-      引入错误码记录变量
-*/
-int innner_mount(xvfs_file_t *fs,lookup_path_t *look_path, unsigned long mnt_flags,char *dev_name,void *data)
+static int xos_mount_child(xvfs_file_t *fs,
+                           lookup_path_t *look_path,
+                           unsigned long fs_flags,
+                           unsigned long mnt_flags,
+                           char *dev_name,
+                           void *data)
 {
     int ret;
     xmount_t *son_m_desc; 
     printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
-    son_m_desc = do_inner_mount(fs, mnt_flags, dev_name, data);
-    if(son_m_desc == NULL){
-
-        ret = fs->init_ret;
-        goto inner_mount_fail;
+    ret = xos_create_mount(fs, fs_flags, mnt_flags, dev_name,
+                           data, &son_m_desc);
+    if (ret < 0) {
+        return ret;
     }
     /******************************************
     * 将子文件系统实例与父文件系统装载点进行绑定建立联系
     ********************************************/
     ret = attach_parent_mount(son_m_desc, look_path, mnt_flags);
     if(ret < 0){
-        goto attach_mount_fail;
+        xos_destroy_mount(son_m_desc);
+        return ret;
     }
 
     /*
@@ -406,11 +541,6 @@ int innner_mount(xvfs_file_t *fs,lookup_path_t *look_path, unsigned long mnt_fla
         先使用return 0,做其它重要的工作
     */
     return 0;
-attach_mount_fail:
-    
-inner_mount_fail:
-    return ret;
-
 }
 
 
@@ -429,44 +559,31 @@ inner_mount_fail:
 */
 int do_mount_at(const char *fs_name,int flags,char *mount_path,char *dev_name,void *data)
 {
-    printk(PT_DEBUG,"%s:%d,fs_name=%s\n\r",__FUNCTION__,__LINE__,fs_name);
     int ret = 0;
     int mnt_flags = 0;
     lookup_path_t look_path;
-    xvfs_file_t *fs = find_match_system(fs_name);
-    printk(PT_DEBUG,"%s:%d,fs_name=%s\n\r",__FUNCTION__,__LINE__,fs->fs_type);
-    xsuperblock *xspuper;
+    xvfs_file_t *fs;
     xmount_t *mnt_desc; 
+
+    if (fs_name == NULL || mount_path == NULL) {
+        return -EINVAL;
+    }
+    fs = find_match_system(fs_name);
+    if (fs == NULL) {
+        return -ENODEV;
+    }
+    printk(PT_DEBUG,"%s:%d,fs_name=%s\n\r",
+           __FUNCTION__,__LINE__,fs->fs_type);
    
     if(strcmp(mount_path,"/") == 0){
-        mnt_desc = xmount_cache_alloc();
-        if(!mnt_desc){
-            ret = -ENOMEM;
+        ret = xos_create_mount(fs, flags, 0, dev_name, data, &mnt_desc);
+        if (ret < 0) {
             return ret;
         }
         printk(PT_RUN,"%s:%d,root_mnt=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)mnt_desc);
-        /*
-            get_filesystem_sb :init_file_system and return file superblock 
-            
-            init_file_system_old(fs,flags,dev_name,data,&root_dentry)
-
-        */
-        xspuper = fs->init_file_system(fs,flags,dev_name,data);
         xos_spinlock(&mnt_lock);
-        mnt_desc->x_super = xspuper;
-        mnt_desc->fs_root = xspuper->root_dentry;
-        mnt_desc->root_dentry = xspuper->root_dentry;
-        list_init(&mnt_desc->link_children_list);
-        list_init(&mnt_desc->link_parent_list);
         mnt_desc->mount_parent = mnt_desc;
-        mnt_desc->mount_point = xspuper->root_dentry;
-        mnt_desc->mount_point_parent = xspuper->root_dentry;
-        mnt_desc->root_dentry = xspuper->root_dentry;
-
-        
-        printk(PT_RUN,"%s:%d,m_desc->mount_point.fs_name=%s\n\r",__FUNCTION__,__LINE__, mnt_desc->mount_point->file_name.path_name);
-        
-        printk(PT_RUN,"%s:%d,fs_name=%s\n\r",__FUNCTION__,__LINE__, mnt_desc->root_dentry->file_name.path_name);
+        mnt_desc->mount_point_parent = mnt_desc->root_dentry;
         /*
             当前current_task 为空
             root mnt attach curr_task->fs_context
@@ -493,11 +610,16 @@ int do_mount_at(const char *fs_name,int flags,char *mount_path,char *dev_name,vo
                 mnt_flags |= MNT_NODEV;
         if (flags & MS_NOEXEC)
                mnt_flags |= MNT_NOEXEC;
-        flags &= ~(MS_NOSUID | MS_NOEXEC | MS_NODEV | MS_ACTIVE);
+        if (flags & MS_RDONLY)
+               mnt_flags |= MNT_READONLY;
         
-        resolve_path(mount_path, LOOKUP_FOLLOW,  &look_path);
+        ret = resolve_path(mount_path, LOOKUP_FOLLOW,  &look_path);
+        if (ret < 0) {
+            return ret;
+        }
         printk(PT_DEBUG,"%s:%d，look_path.look_dentry_name=%s\n\r",__FUNCTION__,__LINE__,look_path.look_dentry->file_name.path_name);
-        ret = innner_mount( fs,&look_path, mnt_flags,dev_name, data);
+        ret = xos_mount_child(fs, &look_path, flags, mnt_flags,
+                              dev_name, data);
         printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
         return ret;
     }
@@ -547,3 +669,4 @@ void sys_umount(char *path_name,int flags)
 int do_mount_at_old(const char *fs_name,int flags,char *mount_path,char *dev_name,void *data)
 
 #endif
+

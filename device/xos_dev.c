@@ -133,20 +133,7 @@ void init_char_dev()
       2. xos_partition_init()  — initialize the partition table parser
 
     I/O scheduler (elevator):
-      xos_block_io_queue is now integrated into xos_blkdev_t.
-      Each registered block device gets its own request queue, initialized
-      automatically in xos_blockdev_register().  The queue supports:
-        - SCAN elevator (bidirectional, minimizes seek)
-        - Deadline-based priority dispatch (prevents starvation)
-        - Adjacent request merging (reduces per-sector overhead)
-      Current execution is synchronous via xos_blockdev_dispatch_io().
-      When interrupt-driven async I/O is added, dispatch will move to a
-      workqueue / softirq context.
 
-      - gen_disk / gendisk layer:  xos_blockdev_add_disk() combines
-        device registration + automatic partition scan (GPT/MBR).
-        Individual drivers call add_disk when their hardware is ready,
-        not here.  This function only sets up the infrastructure.
 */
 int init_block_dev()
 {
@@ -174,5 +161,3 @@ int xos_init_deivices()
     init_block_dev();
     return 0;
 }
-
-

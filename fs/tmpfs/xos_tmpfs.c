@@ -534,6 +534,7 @@ xinode_ops_t tmpfs_dir_fnode_ops = {
 
 void tmpfs_super_init(xsuperblock * super,int flags,void *data)
 {
+    memset(super, 0, sizeof(*super));
     super->block_size = PAGE_SIZE;
     super->mount_behavior = flags;
     super->maigc = TMPFS_MAGIC;
@@ -629,6 +630,7 @@ void release_tmpfs(xsuperblock *super)
 
 xvfs_file_t  tmpfs={
     .fs_type = "tmpfs",
+    .fs_flags = XOS_FS_NODEV,
     .init_file_system = init_file_tmpfs,
     .release_file_system = release_tmpfs,
 
@@ -638,4 +640,5 @@ void init_tmpfs()
 {
     xfs_type_register(&tmpfs);
 }
+
 

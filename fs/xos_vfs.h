@@ -63,15 +63,23 @@ typedef struct xos_superblock{
     文件系统初始化好几个方案，
 */
 typedef int (*init_super)(xsuperblock *,void *data);
+
+#define XOS_FS_REQUIRES_BLOCK (1U << 0)
+#define XOS_FS_NODEV          (1U << 1)
+
 typedef struct xos_vfs_file_type{
     const char* fs_type;
     char file_name[FILE_NAME_NAX];
     dlist_t vfs_list;
+    unsigned int fs_flags;
     xsuperblock *(*init_file_system)(struct xos_vfs_file_type *fs_name,int flags,const char *dev_name,void *data);
-    int (*init_file_system_old)(struct xos_vfs_file_type *fs_name,int flags,const char *dev_name,void *data,xdentry **root_dentry);
+    int (*mount)(struct xos_vfs_file_type *fs_name,
+                 struct xos_block_device *bdev,
+                 int flags,
+                 const char *dev_name,
+                 void *data,
+                 xsuperblock **out_super);
     void (*release_file_system)(xsuperblock *);
-    int init_ret; /*init 执行结果*/
-    int release_ret;/*release 执行结果，两个应该合并使用一个int*/
 
 }xvfs_file_t;
 
