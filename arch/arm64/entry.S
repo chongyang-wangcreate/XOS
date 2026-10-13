@@ -1,7 +1,7 @@
 /* 直接在entry.S中定义所有常量，避免头文件问题 */
 
 
-.equ VA_KERNEL_START,       0xFFFFFF8000000000
+.equ VA_KERNEL_START,       0xFFFFFFC000000000
 .equ PHYS_MEM_START,        0x40000000
 .equ BOOR_EARLY_MAP_END,    0x60000000
 .equ DEVICE_MEM_START,      0x08000000      /* 注意：应该是0x08000000，不是0x09000000 */

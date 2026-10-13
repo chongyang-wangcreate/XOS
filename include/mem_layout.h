@@ -33,7 +33,7 @@ TTBR0_EL1 → L1用户页表 (l1upgt) -> L2用户页表 (l2upgt)
 
 ********************************************************/
 /* 内核虚拟地址起始 */
-#define VA_KERNEL_START      0xFFFFFF8000000000
+#define VA_KERNEL_START      0xFFFFFFC000000000ULL
 
 /* 物理内存布局（基于QEMU virt 1GB内存） */
 #define PHYS_MEM_START       0x40000000UL  /* 1GB内存起始 */

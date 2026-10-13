@@ -29,7 +29,7 @@ extern int  uart_getc(void);
 
 
 #define UART0           0x09000000
-#define UART0_VIRT  (0xFFFFFF8000000000ULL + UART0)
+#define UART0_VIRT  (0xFFFFFFC000000000ULL + UART0)
 #define UART_CLK        24000000    // Clock rate for UART
 
 typedef struct uart_desc{

@@ -3,7 +3,7 @@ OUTPUT_ARCH(aarch64)
 ENTRY(_start)
 
 /* ========== 参数设置 ========== */
-KERNEL_START = 0xFFFFFF8000000000;
+KERNEL_START = 0xFFFFFFC000000000;
 //BOOT_MAIN_STACK_SIZE = 0x4000;
 BOOT_MEM_SIZE = 0x200000;
 PAGE_SIZE = 4096;
@@ -27,11 +27,11 @@ MAIN_STACK_SIZE = 0x10000;
 
 SECTIONS {
     /* ========== 内核虚拟地址起始 ========== */
-    . = 0xffffff8040000000;
+    . = KERNEL_START + LOAD_ADDR_START;
     __text = .;
 
     /* ---------- 启动代码（.text.boot）---------- */
-    .text.boot : AT(ADDR(.text.boot) - 0xffffff8000000000) {
+    .text.boot : AT(ADDR(.text.boot) - 0xffffffc000000000) {
         __head_start = .;
         KEEP(*(.text.boot))
         __head_end = .;
@@ -42,7 +42,7 @@ SECTIONS {
     . = ALIGN(4096);
 
     
-    .text : AT(ADDR(.text) - 0xffffff8000000000) {
+    .text : AT(ADDR(.text) - 0xffffffc000000000) {
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).text)
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).text.*)
     }
@@ -53,7 +53,7 @@ SECTIONS {
     . = ALIGN(4096);
 
    
-    .rodata : AT(ADDR(.rodata) - 0xffffff8000000000) {
+    .rodata : AT(ADDR(.rodata) - 0xffffffc000000000) {
         _srodata = .;
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).rodata)
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).rodata.*)
@@ -64,7 +64,7 @@ SECTIONS {
     . += KERNEL_SECTION_GUARD_SIZE;
     . = ALIGN(4096);
 
-    .data : AT(ADDR(.data) - 0xffffff8000000000) {
+    .data : AT(ADDR(.data) - 0xffffffc000000000) {
         _sdata = .;
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).data)
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).data.*)
@@ -75,7 +75,7 @@ SECTIONS {
     . += KERNEL_SECTION_GUARD_SIZE;
     . = ALIGN(4096);
 
-    .bss : AT(ADDR(.bss) - 0xffffff8000000000) {
+    .bss : AT(ADDR(.bss) - 0xffffffc000000000) {
         __bss_start = .;
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).bss)
         *(EXCLUDE_FILE(output/usr/*.o output/usr/libc/*.o).bss.*)
@@ -90,7 +90,7 @@ SECTIONS {
     . = ALIGN(4096);
 
     __init_begin = .;
-    .kernel_reserved : AT(ADDR(.kernel_reserved) - 0xffffff8000000000) {
+    .kernel_reserved : AT(ADDR(.kernel_reserved) - 0xffffffc000000000) {
         /* 主栈 */
         . = ALIGN(16);
         . += MAIN_STACK_SIZE;
@@ -131,9 +131,9 @@ SECTIONS {
     __init_end = .;
     PROVIDE(kernel_end = ADDR(.kernel_reserved) + SIZEOF(.kernel_reserved));
     
-    kernel_end_phys = kernel_end - 0xffffff8000000000;
-    __bss_start_phys = __bss_start - 0xffffff8000000000;
-    __bss_end_phys = __bss_end - 0xffffff8000000000;
+    kernel_end_phys = kernel_end - 0xffffffc000000000;
+    __bss_start_phys = __bss_start - 0xffffffc000000000;
+    __bss_end_phys = __bss_end - 0xffffffc000000000;
 
 
     /* 用户段虚拟地址 */
@@ -195,9 +195,9 @@ SECTIONS {
     PROVIDE(_load_addr_start = LOAD_ADDR_START);
 	PROVIDE(_load_addr_start_virt = KERNEL_START + _load_addr_start);
     PROVIDE(kernel_end_phys_virt = KERNEL_START + kernel_end_phys); 
-	PROVIDE(_boot_mem_begin_phys = _boot_mem_begin - 0xffffff8000000000);
+	PROVIDE(_boot_mem_begin_phys = _boot_mem_begin - 0xffffffc000000000);
         
-    PROVIDE(_page_arrays_end_phys = _page_arrays_end - 0xffffff8000000000);
+    PROVIDE(_page_arrays_end_phys = _page_arrays_end - 0xffffffc000000000);
     /DISCARD/ : {
         *(.comment)
         *(.eh_frame)
