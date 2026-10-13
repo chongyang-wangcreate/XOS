@@ -151,10 +151,15 @@ void start_init(char *array)
 #ifndef CONFIG_DEV
      xos_init_deivices(); 
 #endif
-
+    xos_boot_secondary_cpus();
+    #ifdef CONFIG_SMP_TEST
+    xos_smp_selftest();
 #ifdef CONFIG_PROCESS_TEST
+
     xos_process_selftest();
 #endif
+
+    #endif
    // process_create();
     while(1){
         child_pid = process_create();
@@ -231,10 +236,7 @@ void kernel_init (uint64 dtb_phys)
     */
     xos_thread_create(5, (unsigned long)&kernel_idle, 6);
     xos_thread_create(2, (unsigned long)&start_init, 6);
-    xos_boot_secondary_cpus();
-    #ifdef CONFIG_SMP_TEST
-    xos_smp_selftest();
-    #endif
+
 
     xos_cli();
     load_proc_flags = 1;
