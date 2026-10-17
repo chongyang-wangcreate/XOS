@@ -235,6 +235,7 @@ static inline int linear_addr_valid(const void *ptr)
 
     return (uint64_t)ptr >= VA_LINEAR_BASE && (uint64_t)ptr < VA_LINEAR_END;
 }
+
 int xos_pages_map(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot)
 {
     xos_3level_maps(pgdir, va,size, pa,  prot);

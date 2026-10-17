@@ -66,7 +66,8 @@ extern xos_zone_t zone_dma;
 
 #define XOS_PAGE_TO_PHY(page) (XOS_PAGE_TO_PFN(page)<<PAGE_SHIFT)
 //#define XOS_PFN_TO_PAGE(pfn)  (zone_normal.z_vmempage + pfn)
-#define PHY_TO_VIRT(phy) (void*)(VA_KERNEL_START + phy)
+#define PHY_TO_VIRT(phy) P2V(phy)
+
 
 #define XOS_USER_PAGE_TO_PFN(page) (page - zone_user.z_vmempage + zone_user.start_pfn)
 #define XOS_USER_PAGE_TO_phy(page) (XOS_USER_PAGE_TO_PFN(page)<<PAGE_SHIFT)
