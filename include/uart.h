@@ -1,6 +1,8 @@
 #ifndef __UART_H__
 #define __UART_H__
 
+#include "mem_layout.h"
+
 extern void uart_init (void *addr);
 extern void uart_enable_rx();
 extern void uart_putc (int c);
@@ -29,7 +31,7 @@ extern int  uart_getc(void);
 
 
 #define UART0           0x09000000
-#define UART0_VIRT  (0xFFFFFFC000000000ULL + UART0)
+#define UART0_VIRT  IO_P2V_UL(UART0)
 #define UART_CLK        24000000    // Clock rate for UART
 
 typedef struct uart_desc{

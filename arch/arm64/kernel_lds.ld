@@ -109,6 +109,8 @@ SECTIONS {
         . += 4096;
         PROVIDE(l2_kernel_pgt1 = .);
         . += 4096;
+        PROVIDE(l2_kernel_linear_pgt = .);
+        . += 4096;
         PROVIDE(l1_user_pgt = .);
         . += 4096;
         PROVIDE(l2_user_pgt = .);
@@ -205,6 +207,8 @@ SECTIONS {
 
     ASSERT(kernel_end_phys < _user_text_lma, "kernel reserved overlaps user image lma")
     ASSERT(_user_image_end_lma <= 0x80000000, "kernel/user image exceeds supported RAM window")
+    ASSERT(kernel_end <= 0xFFFFFFC100000000, "kernel image exceeds image VA region")
+    ASSERT((__text >> 30) == ((kernel_end - 1) >> 30), "kernel image spans multiple boot PGD entries")
 }
 
 __bss_size = (__bss_end - __bss_start) >> 3;

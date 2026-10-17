@@ -68,14 +68,14 @@ uint64 boot_mem_alloc(size_t size) {
     return ret_addr;
 }
 
+
 uint64 boot_alloc_virt(size_t size) {
     uint64 ret_addr = (uint64)boot_mem_start;
     // put_hex(ret_addr);
     boot_mem_start += ALIGN_UP(size, sizeof(uint64));
 
-    return ret_addr + VA_KERNEL_START;
+    return LINEAR_P2V_UL(ret_addr);
 }
-
 
 
 void *boot_alloc_l1_pgd()

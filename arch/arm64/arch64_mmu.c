@@ -322,7 +322,7 @@ void map_mem_maps(uint64 *kern_pgd)
             .attr = ATTR_UXN | PT_ATTRINDX(MT_NORMAL),
         },
         {
-            .virt = LINEAR_P2V_UL(DEVMEM_RANGE1_BASE),
+            .virt = IO_P2V_UL(DEVMEM_RANGE1_BASE),
             .phys = DEVMEM_RANGE1_BASE,
             .size = 0X3000000,
             .attr = PT_ATTRINDX(MT_DEVICE_nGnRnE),
@@ -347,20 +347,21 @@ void kernel_early_mem_map(uint64 *kern_pgd)
     uint64 data_end = (uint64)kernel_end_phys_virt;
 
     boot_mem_3level_maps((pgd_t *)kern_pgd, (void *)text_start,
-                    text_end - text_start, text_start - VA_KERNEL_START, KERNEL_TEXT_PROT);
+                    text_end - text_start, KERNEL_IMAGE_V2P(text_start), KERNEL_TEXT_PROT);
     boot_mem_3level_maps((pgd_t *)kern_pgd, (void *)rodata_start,
-                    rodata_end - rodata_start, rodata_start - VA_KERNEL_START, KERNEL_RODATA_PROT);
+                    rodata_end - rodata_start, KERNEL_IMAGE_V2P(rodata_start), KERNEL_RODATA_PROT);
     boot_mem_3level_maps((pgd_t *)kern_pgd, (void *)data_start,
-                    data_end - data_start, data_start - VA_KERNEL_START, KERNEL_DATA_PROT);
+                    data_end - data_start, KERNEL_IMAGE_V2P(data_start), KERNEL_DATA_PROT);
     // 现在这个函数只在 kernel_init 中调用，用于建立线性映射
     // 但此时 MMU 已经开启，所以直接使用 xos_3level_maps
     xos_2level_maps(kern_pgd, (uint64)MEM_PHY_START, (uint64)MEM_PHY_START,
                     FIR_MAP_SIZE, ATTR_UXN | PT_ATTRINDX(MT_NORMAL));
-    xos_2level_maps(kern_pgd, (uint64)VA_KERNEL_START + (uint64)DEVMEM_RANGE1_BASE,
+    xos_2level_maps(kern_pgd, IO_P2V_UL(DEVMEM_RANGE1_BASE),
                     (uint64)DEVMEM_RANGE1_BASE, 0x3000000, PT_ATTRINDX(MT_DEVICE_nGnRnE));
     xos_2level_maps(kern_pgd, (uint64)DEVMEM_RANGE1_BASE, (uint64)DEVMEM_RANGE1_BASE,
                     DEVMEM_MAP_SIZE, PT_ATTRINDX(MT_DEVICE_nGnRnE));
 }
+
 
 
   /*

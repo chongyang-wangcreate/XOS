@@ -1,7 +1,6 @@
-/* 直接在entry.S中定义所有常量，避免头文件问题 */
-
-
 .equ VA_KERNEL_START,       0xFFFFFFC000000000
+.equ VA_LINEAR_BASE,        0xFFFFFF8000000000
+.equ VA_IO_BASE,            0xFFFFFFFE00000000
 .equ PHYS_MEM_START,        0x40000000
 .equ BOOR_EARLY_MAP_END,    0x60000000
 .equ DEVICE_MEM_START,      0x08000000      /* 注意：应该是0x08000000，不是0x09000000 */
@@ -22,11 +21,12 @@
 .equ PTE_UXN,               0x0040000000000000
 .equ PTE_PXN,               0x0020000000000000
 .equ PTE_INDX_DEVICE,       0x0000000000000000
-.equ PTE_INDX_NORMAL,       0x0000000000000004
+.equ PTE_INDX_NORMAL,       0x0000000000000010
 
 
 .equ PTE_KERNEL_FLAGS,      (PTE_AF | PTE_INDX_NORMAL | PTE_VALID)  /* 0x405 */
 .equ PTE_DEVICE_FLAGS,      (PTE_AF | PTE_INDX_DEVICE | PTE_VALID)  /* 0x401 */
+.equ PTE_LINEAR_FLAGS,      (PTE_KERNEL_FLAGS | PTE_UXN | PTE_PXN)
 .equ PTE_TABLE_FLAGS,       (PTE_TABLE | PTE_VALID)                 /* 0x3 */
 
 
@@ -40,7 +40,7 @@
 /* MAIR set */
 .equ MAIR_DEVICE_nGnRnE,    0x00
 .equ MAIR_NORMAL_NC,        0x44
-.equ MAIR_VALUE,            ((MAIR_NORMAL_NC << 8) | MAIR_DEVICE_nGnRnE)  /* 0x4400 */
+.equ MAIR_VALUE,            ((MAIR_NORMAL_NC << 32) | MAIR_DEVICE_nGnRnE)
 .equ CPACR_EL1_FPEN,        (3 << 20)
 
 .macro enable_fp
@@ -96,11 +96,13 @@
     map_l2_blocks l2_user_pgt,PHYS_MEM_START,(BOOR_EARLY_MAP_END -1),0,PTE_KERNEL_FLAGS
     install_l1_table l1_user_pgt,l2_user_pgt,PHYS_MEM_START
 
-    map_l2_blocks l2_kernel_pgt0,DEVICE_MEM_START,DEVICE_MEM_END,VA_KERNEL_START,PTE_DEVICE_FLAGS
+    map_l2_blocks l2_kernel_pgt0,DEVICE_MEM_START,DEVICE_MEM_END,VA_IO_BASE,(PTE_DEVICE_FLAGS | PTE_UXN | PTE_PXN)
     map_l2_blocks l2_kernel_pgt1,PHYS_MEM_START,(BOOR_EARLY_MAP_END -1),VA_KERNEL_START,PTE_KERNEL_FLAGS
+    map_l2_blocks l2_kernel_linear_pgt,PHYS_MEM_START,(BOOR_EARLY_MAP_END -1),VA_LINEAR_BASE,PTE_LINEAR_FLAGS
 
-    install_l1_table l1_kernel_pgt,l2_kernel_pgt0,(VA_KERNEL_START + DEVICE_MEM_START)
+    install_l1_table l1_kernel_pgt,l2_kernel_pgt0,(VA_IO_BASE + DEVICE_MEM_START)
     install_l1_table l1_kernel_pgt,l2_kernel_pgt1,(VA_KERNEL_START + PHYS_MEM_START)
+    install_l1_table l1_kernel_pgt,l2_kernel_linear_pgt,(VA_LINEAR_BASE + PHYS_MEM_START)
 .endm
 
 .macro set_mmu_regs
@@ -126,6 +128,18 @@
     isb
 .endm
 .section ".text.boot"
+
+.global replace_boot_mapping
+replace_boot_mapping:
+    str xzr, [x0]
+    dsb ishst
+    tlbi vmalle1
+    dsb ish
+    isb
+    str x1, [x0]
+    dsb ishst
+    isb
+    ret
 
 .global _start
 
@@ -196,4 +210,4 @@ set_virt_stack:
 .global hang
 hang:
     wfe
-    b hang 
+    b hang

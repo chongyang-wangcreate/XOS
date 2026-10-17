@@ -18,15 +18,7 @@
 
 ********************************************************/
 
-/*
 
- TTBR1_EL1 → L1内核页表 (l1_kernel_pgt) -> L2内核页表0 (l2_kernel_pgt0)
-                                           ↓
-                                        L2内核页表1 (l2kpgt1)
-                                        
-TTBR0_EL1 → L1用户页表 (l1upgt) -> L2用户页表 (l2upgt)
-
-*/
 #include "types.h"
 #include "mmu.h"
 #include "string.h"
@@ -71,6 +63,7 @@ extern uint64 l1_kernel_pgt[];
 extern uint64 l2_kernel_pgt0[];
 extern uint64 l2_kernel_pgt1[];
 extern uint64 l1_user_pgt[];
+extern void replace_boot_mapping(uint64 *entry, uint64 descriptor);
 
 int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot);
 /*
@@ -223,7 +216,7 @@ int pgd_map(pgd_t *pgd_p,u64 vaddr,u64 paddr,u64 size,u64 attr)
 
 static inline void flush_tlb (void)
 {
-    asm("tlbi vmalle1" : : :);
+    asm volatile("dsb ishst\n\ttlbi vmalle1\n\tdsb ish\n\tisb" ::: "memory");
 }
 
 static inline int pt_entry_is_table(uint64_t entry)
@@ -240,7 +233,7 @@ static inline int pt_entry_is_valid(uint64_t entry)
 static inline int linear_addr_valid(const void *ptr)
 {
 
-    return (((uint64_t)ptr) >= VA_KERNEL_START);
+    return (uint64_t)ptr >= VA_LINEAR_BASE && (uint64_t)ptr < VA_LINEAR_END;
 }
 int xos_pages_map(pgd_t *pgdir, void *va, uint64 size, unsigned long pa, uint64 prot)
 {
@@ -293,7 +286,7 @@ int xos_linear_maps(uint64 phy_start, uint64 phy_end)
 
     void *map_vaddr_star = P2V(phy_start);
 
-    uint64  prot = PG_RW_EL1_EL0;
+    uint64  prot = PG_RW_EL1 | ATTR_UXN | ATTR_PXN;
     
     ret = boot_mem_3level_maps(pgdir, map_vaddr_star,map_size, phy_start,prot);
 //    xos_3level_maps(pgdir, map_vaddr_star,map_size, phy_start,prot);
@@ -335,7 +328,7 @@ extern char __bss_end[];
 #define KERNEL_RODATA_PROT    (PG_RO_EL1 | ATTR_UXN | ATTR_PXN)
 #define KERNEL_DATA_PROT      (PG_RW_EL1 | ATTR_UXN | ATTR_PXN)
 
-static void xos_kernel_section_map(char *start, char *end, uint64 prot)
+static void xos_kernel_section_map(pgd_t *pgdir, char *start, char *end, uint64 prot)
 {
     uint64 vstart = ALIGN_DOWN((uint64)start, PAGE_SIZE);
     uint64 vend = ALIGN_UP((uint64)end, PAGE_SIZE);
@@ -344,22 +337,49 @@ static void xos_kernel_section_map(char *start, char *end, uint64 prot)
         return;
     }
 
-    boot_mem_3level_maps(l1_kernel_pgt, (void *)vstart, vend - vstart,
-                         vstart - VA_KERNEL_START, prot);
+    boot_mem_3level_maps(pgdir, (void *)vstart, vend - vstart,
+                         KERNEL_IMAGE_V2P(vstart), prot);
 }
 
 void xos_kernel_map(void)
 {
-    xos_kernel_section_map(__text, _etext, KERNEL_TEXT_PROT);
-    xos_kernel_section_map(_srodata, _erodata, KERNEL_RODATA_PROT);
+    pgd_t *image_pgdir = (pgd_t *)boot_alloc_virt(PAGE_SIZE);
+    pgd_t *linear_pgdir = (pgd_t *)boot_alloc_virt(PAGE_SIZE);
+    pmd_t *linear_pmd = (pmd_t *)boot_alloc_virt(PAGE_SIZE);
+    printk(PT_DEBUG, "image_pgdir_addr=%lx\n",(unsigned long)image_pgdir);
+    printk(PT_DEBUG, "linear_pgdir_addr=%lx\n",(unsigned long)linear_pgdir);
+    printk(PT_DEBUG, "linear_pmd_addr=%lx\n",(unsigned long)linear_pmd);
+    unsigned long image_index = PGD_IDX((uint64)__text);
+    unsigned long linear_index = PGD_IDX(LINEAR_P2V_UL(PHYS_MEM_START));
+    void (*replace_mapping)(uint64 *, uint64) =
+        (void (*)(uint64 *, uint64))KERNEL_IMAGE_V2P(replace_boot_mapping);
+
+    memset(image_pgdir, 0, PAGE_SIZE);
+    memset(linear_pgdir, 0, PAGE_SIZE);
+    memcpy(linear_pmd, P2V(l1_kernel_pgt[linear_index] & PG_4k_ADDR_MASK), PAGE_SIZE);
+    linear_pgdir[linear_index] = V2P(linear_pmd) | PT_ENTRY_TABLE | PT_ENTRY_VALID;
+
+    xos_kernel_section_map(image_pgdir, __text, _etext, KERNEL_TEXT_PROT);
+    xos_kernel_section_map(image_pgdir, _srodata, _erodata, KERNEL_RODATA_PROT);
     /*
      * Keep the linker guard pages between .data, .bss and the reserved
      * kernel area unmapped. Mapping one continuous range to kernel_end would
      * turn those guard pages into ordinary writable pages.
      */
-    xos_kernel_section_map(_sdata, _edata, KERNEL_DATA_PROT);
-    xos_kernel_section_map(__bss_start, __bss_end, KERNEL_DATA_PROT);
-    xos_kernel_section_map(__init_begin, __init_end, KERNEL_DATA_PROT);
+    xos_kernel_section_map(image_pgdir, _sdata, _edata, KERNEL_DATA_PROT);
+    xos_kernel_section_map(image_pgdir, __bss_start, __bss_end, KERNEL_DATA_PROT);
+    xos_kernel_section_map(image_pgdir, __init_begin, __init_end, KERNEL_DATA_PROT);
+    printk(PT_DEBUG, "kernel map finish FFFFFFFFFFF\n");
+    boot_mem_3level_maps(linear_pgdir, P2V(KERNEL_IMAGE_V2P(__text)),
+                         ALIGN_UP((uint64)_etext, PAGE_SIZE) - (uint64)__text,
+                         KERNEL_IMAGE_V2P(__text), KERNEL_RODATA_PROT);
+    boot_mem_3level_maps(linear_pgdir, P2V(KERNEL_IMAGE_V2P(_srodata)),
+                         (uint64)_erodata - (uint64)_srodata,
+                         KERNEL_IMAGE_V2P(_srodata), KERNEL_RODATA_PROT);
+    replace_mapping((uint64 *)(KERNEL_IMAGE_V2P(l1_kernel_pgt) + image_index * sizeof(pgd_t)),
+                    image_pgdir[image_index]);
+    replace_mapping((uint64 *)(KERNEL_IMAGE_V2P(l1_kernel_pgt) + linear_index * sizeof(pgd_t)),
+                    linear_pgdir[linear_index]);
     flush_tlb();
     printk(PT_ERROR, "Kernel section map finish\n");
 }  
@@ -377,8 +397,8 @@ void all_phys_linear_map(void)
     xos_linear_maps(p_start, p_end);*/
     
     /* 映射zone元数据区域 */
-    uint64_t meta_start = (uint64_t)_zone_metadata_start - VA_KERNEL_START;
-    uint64_t meta_end = (uint64_t)_zone_metadata_end - VA_KERNEL_START - 1;
+    uint64_t meta_start = KERNEL_IMAGE_V2P(_zone_metadata_start);
+    uint64_t meta_end = KERNEL_IMAGE_V2P(_zone_metadata_end) - 1;
     if(xos_linear_maps(meta_start, meta_end) < 0){
         printk(PT_ERROR,"zone metadata linear map failed\n\r");
     }
@@ -636,7 +656,6 @@ int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa,
                 无效 申请页表空间，并将页表基地址放入pmd 对应的页表项中
             */
             pmd_array_base = (pmd_t*)boot_alloc_virt(4096);
-            xos_uart_puts("map_mem  else\n\r");
             memset(pmd_array_base, 0, PTE_ENTRY_SIZE);
             /*
                 二级某个页表创建完毕，并且将页表基地址加入到一级页表(我们也成为页目录)某个目录项中
@@ -652,12 +671,22 @@ int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa,
         {
             pte_array_base = (pte_t*) P2V((*pmd) & PG_4k_ADDR_MASK);
         }else if(pt_entry_is_valid(*pmd)){
-            if(((*pmd) & PMD_MASK) == (pa & PMD_MASK)){
-                goto next_page;
+            /*页表项有效且属于block映射*/
+            uint64 block_start = *pmd & PG_4k_ADDR_MASK & PMD_MASK;
+            uint64 block_flags = *pmd & ~PG_4k_ADDR_MASK;
+            int page_index;
+
+            if(block_start != (pa & PMD_MASK)){
+                return -1;
             }
-            printk(PT_RUN,"%s:%d,pmd block entry=%lx for va=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)*pmd,
-            (unsigned long )start);
-            return -1;
+            pte_array_base = (pte_t *)boot_alloc_virt(PAGE_SIZE);
+            for(page_index = 0; page_index < PTE_ENTRY_NUMS; page_index++){
+                pte_array_base[page_index] = (block_start + page_index * PAGE_SIZE) |
+                                             block_flags | PT_ENTRY_PAGE;
+            }
+            /*覆盖原pmd目录项，更改原BLOCK 属性为 TABLE*/
+            ((void (*)(uint64 *, uint64))KERNEL_IMAGE_V2P(replace_boot_mapping))(
+                (uint64 *)V2P(pmd), V2P(pte_array_base) | PT_ENTRY_TABLE | PT_ENTRY_VALID);
         }else{
             pte_array_base = (pte_t*) boot_alloc_virt(4096);
             
@@ -673,7 +702,6 @@ int boot_mem_3level_maps (pgd_t *pgdir, void *va, uint64 size, unsigned long pa,
         */
         *pte = pa | ACCESS_FLAG | SH_IN_SH | prot | NON_SECURE_PA | PT_ATTRINDX(MT_NORMAL) | PT_ENTRY_PAGE | PT_ENTRY_VALID;
 
-next_page:
         if (start == last) {
             break;
         }
@@ -859,6 +887,7 @@ pte_t * copy_create_3level_page(pgd_t *pgdir, void *va)
     pte =  &pte_array_base[PTE_IDX(start)];     /*pte_array_base 三级页表基地址，偏移找到具体三级页表项*/
     return pte;
 }
+
 #if LEVEL_4
 int xos_4level_maps (pgd_t *pgdir, void *va, uint size, uint pa, uint64 ap)
 {

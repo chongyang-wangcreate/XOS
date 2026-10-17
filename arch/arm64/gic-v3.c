@@ -625,8 +625,8 @@ int gic_init_bases(void __iomem *dist_base,
 
 int gic_init(void)
 {
-    gic_init_bases((void *)P2V(GIC_DIST_BASE_ADDR),(void *)P2V(GIC_RD_BASE_ADDR),
-                CPU_NR);
+	gic_init_bases(IO_P2V(GIC_DIST_BASE_ADDR),IO_P2V(GIC_RD_BASE_ADDR),
+                 CPU_NR);
 
     return 0;
 }

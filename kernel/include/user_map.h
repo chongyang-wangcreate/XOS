@@ -2,6 +2,7 @@
 #define __LOAD_USER_H__
 
 #include "types.h"
+#include "mem_layout.h"
 
 #define VA_BITS 39
 
@@ -11,10 +12,10 @@
 #define USER_STACK_START  (USER_STACK_TOP - USER_STACK_SIZE)
 #define USER_STACK_INIT_SP (USER_STACK_TOP & ~0xfUL)
 
-#define __va(x) ((void *)((unsigned long)(x) + VA_KERNEL_START))
-#define __pa(x) ((void *)((unsigned long)(x) - VA_KERNEL_START))
-#define  V_TO_POINTER(virt) ((void *)((unsigned long)(virt) - VA_KERNEL_START))
-#define  V_TO_P(virt) (((unsigned long)(virt) - VA_KERNEL_START))
+#define __va(x) P2V(x)
+#define __pa(x) ((void *)V2P(x))
+#define V_TO_POINTER(virt) ((void *)V2P(virt))
+#define V_TO_P(virt) V2P(virt)
 
 #define _TO_UVA_(x) ((void *)((unsigned long)(x) + USER_SPACE_DEVMAP))
 

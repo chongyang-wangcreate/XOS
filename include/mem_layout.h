@@ -33,7 +33,16 @@ TTBR0_EL1 → L1用户页表 (l1upgt) -> L2用户页表 (l2upgt)
 
 ********************************************************/
 /* 内核虚拟地址起始 */
-#define VA_KERNEL_START      0xFFFFFFC000000000ULL
+#define VA_LINEAR_BASE       0xFFFFFF8000000000ULL
+#define VA_LINEAR_END        0xFFFFFFC000000000ULL
+#define VA_KERNEL_IMAGE_BASE 0xFFFFFFC000000000ULL
+#define VA_KERNEL_IMAGE_END  0xFFFFFFC100000000ULL
+#define VA_VMALLOC_START     VA_KERNEL_IMAGE_END
+#define VA_VMALLOC_END       0xFFFFFFFE00000000ULL
+#define VA_IO_BASE           0xFFFFFFFE00000000ULL
+#define VA_IO_END            0xFFFFFFFF00000000ULL
+#define VA_FIXMAP_START      0xFFFFFFFF00000000ULL
+#define VA_KERNEL_START      VA_KERNEL_IMAGE_BASE
 
 /* 物理内存布局（基于QEMU virt 1GB内存） */
 #define PHYS_MEM_START       0x40000000UL  /* 1GB内存起始 */
@@ -139,15 +148,22 @@ extern uint8_t _user_image_end_lma_virt[];
 #define PHY_KERNMAP_END      (MEM_PHY_START + RAM_SIZE )
 
 
-#define V2P(a) (((uint64) (a)) - (uint64)VA_KERNEL_START)
-#define P2V(a) ((void *) (((uint64)a) + (uint64)VA_KERNEL_START))
 
 
-#define LINEAR_P2V_UL(x) ((unsigned long)(x) + (uint64)VA_KERNEL_START)
+
+#define LINEAR_P2V_UL(x) ((unsigned long)(x) + (uint64)VA_LINEAR_BASE)
 #define LINEAR_P2V(x)   ((void*)LINEAR_P2V_UL(x))
 
-#define LINEAR_V2P_UL(x) (((unsigned long)(x)) - (unsigned long)VA_KERNEL_START)
+#define LINEAR_V2P_UL(x) (((unsigned long)(x)) - (unsigned long)VA_LINEAR_BASE)
 #define LINEAR_V2P(x)    ((void*)LINEAR_V2P_UL(x))
+
+#define V2P(a) LINEAR_V2P_UL(a)
+#define P2V(a) LINEAR_P2V(a)
+
+#define KERNEL_IMAGE_V2P(x) ((uint64)(x) - VA_KERNEL_IMAGE_BASE)
+#define KERNEL_IMAGE_P2V(x) ((void *)((uint64)(x) + VA_KERNEL_IMAGE_BASE))
+#define IO_P2V_UL(x) ((uint64)(x) + VA_IO_BASE)
+#define IO_P2V(x) ((void *)IO_P2V_UL(x))
 
 #define XOS_FIXMAP_SLOTS   32
 #define XOS_FIXMAP_TOP     0xFFFFFFFFFFE00000UL

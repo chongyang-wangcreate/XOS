@@ -96,8 +96,9 @@ int xos_boot_secondary_cpus(void)
     int requested[CPU_NR];
     int requested_count = 0;
     int possible = xos_cpu_possible_count();
-    uint64 boot_entry = (uint64)secondary_entry - VA_KERNEL_START;
+    uint64 boot_entry = KERNEL_IMAGE_V2P(secondary_entry);
 
+    printk(PT_DEBUG,"xos_boot_secondary_cpus start\n\r");
     if(possible <= 1){
         return 0;
     }

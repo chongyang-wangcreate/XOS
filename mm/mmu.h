@@ -13,13 +13,15 @@
 
 一个处理器所支持的粒度大小是ID_AA64MMFR0_EL1定义的，所有Arm Cortex-A处理器都支持4KB和64KB。选择的颗粒是可以在最新级别表中描述的最小块。也可以描述更大的块。此表显示了基于所选粒度的每个级别表的不同块的尺寸：
 
-
+Bit [1]	    描述符类型（中间层级 L0-L2）	描述符类型（最后层级 L3）
+1	        表描述符（Table Descriptor）  指向下一级页表。	页描述符（Page Descriptor），映射一个最终页（如4KB）。
+0	        块描述符（Block Descriptor）  直接映射一个大块内存。	无效（Invalid），在此层级不适用。
 */
-#define PT_ENTRY_VALID         0x01
+#define PT_ENTRY_VALID         0x01       //有效 + block descriptor: 低两位 01
 #define PT_ENTRY_NEXT_BLOCK    0x00
 #define PT_ENTRY_TABLE         0x02      //属于不同的Level,(block desc) (level0 leve1 level2),中间层level
 #define PT_ENTRY_PAGE          0x02      //属于不同的level,最后一个Level page descriptors(leve3)
-#define PT_ENTRY_NEXT_TABLE    0x03
+#define PT_ENTRY_NEXT_TABLE    0x03      //有效 + table descriptor: 低两位 11
 #define PT_ENTRY_IGNOR	       0x00
 
 
