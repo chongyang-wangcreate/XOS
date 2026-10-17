@@ -355,9 +355,11 @@ typedef struct dentry_name {
 /*
     描述文件名称，关联文件节点
 */
+#define XOS_DENTRY_NAME_MAX 128
+
 typedef struct xos_dentry{
     xos_spinlock_t  lock;  /*防止多进程竞争冲突问题*/
-//    char file_name[128]; /**/
+    unsigned char name_buf[XOS_DENTRY_NAME_MAX];
     xsuperblock *xsb;
     path_name_t file_name;
     struct xos_inode *file_node;

@@ -273,16 +273,30 @@ xdentry *dentry_from_child_link(dlist_t *node)
 xdentry *xdentry_cache_alloc_init(xdentry *parent,const path_name_t *name)
 {
     xdentry *dentry_cache = NULL;
+    unsigned int name_len;
 
+    if (name == NULL || name->path_name == NULL || name->len == 0 ||
+        name->len >= XOS_DENTRY_NAME_MAX) {
+        return NULL;
+    }
     dentry_cache = alloc_cache_xdentry_unlock();
+    if (dentry_cache == NULL) {
+        return NULL;
+    }
     memset(dentry_cache,0,sizeof(xdentry));   
     /*
         very important
-        2025010, path_name 函数指针指向的是局部指针字符串，所以有问题
+        20261016, path_name 函数指针指向的是局部指针字符串，所以可能存在问题
         dentry_cache->file_name.path_name = name->path_name;
+        这种写法存在问题，如果name是局部变量，或者name->path_name 指向栈上的临时缓冲区
+        那么当函数返回或内存释放后，dentry_cache->file_name.path_name 就会变成野指针
+        所以改成：dentry_cache->file_name.path_name = dentry_cache->name_buf
     */
-    dentry_cache->file_name.len = name->len;
-    dentry_cache->file_name.path_name = name->path_name;
+    name_len = name->len;
+    memcpy(dentry_cache->name_buf, name->path_name, name_len);
+    dentry_cache->name_buf[name_len] = '\0';
+    dentry_cache->file_name.len = name_len;
+    dentry_cache->file_name.path_name = dentry_cache->name_buf;
 
     dget(dentry_cache);
     
@@ -311,7 +325,13 @@ xdentry *xdentry_cache_alloc_init_old(xdentry *parent,const path_name_t *name)
 {
     int i;
     xdentry *dentry_cache = NULL;
+    unsigned int name_len;
     printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
+
+    if (name == NULL || name->path_name == NULL || name->len == 0 ||
+        name->len >= XOS_DENTRY_NAME_MAX) {
+        return NULL;
+    }
 
     
     for(i = 0;i < MAX_DENTRY;i++)
@@ -340,8 +360,11 @@ xdentry *xdentry_cache_alloc_init_old(xdentry *parent,const path_name_t *name)
         2025010, path_name 函数指针指向的是局部指针字符串，所以有问题
         dentry_cache->file_name.path_name = name->path_name;
     */
-    dentry_cache->file_name.len = name->len;
-    dentry_cache->file_name.path_name = name->path_name;
+    name_len = name->len;
+    memcpy(dentry_cache->name_buf, name->path_name, name_len);
+    dentry_cache->name_buf[name_len] = '\0';
+    dentry_cache->file_name.len = name_len;
+    dentry_cache->file_name.path_name = dentry_cache->name_buf;
 
     dget(dentry_cache);
     

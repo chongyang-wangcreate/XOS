@@ -152,9 +152,13 @@ int shell_main(void)
         调试中发现重大问题，input_c 数组开辟256 栈空间，会莫名其妙的出现
         用户态会访问内核态地址空间，而且异常地址是显示是memset   ,改成128 就没问题
         开始怀疑栈空间不够更改stack_vma 范围没有起作用这个问题后续一定要查清楚。
-    */
-    char input_c[128] = {0};
 
+        2026.10.17 PM:20:40 char input_c[128] = {0}; 这个编译器会默认使用memset,但是
+        memset位于内核态，造成用户态执行内核态代码，出现权限报错
+    */
+    char input_c[128];
+
+    user_memset(input_c, 0, sizeof(input_c));
     xos_shell_cmd_init();
     mkdir("/home/test2", 0);
     mkdir("/test",0);

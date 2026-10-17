@@ -2,19 +2,10 @@
 #include "types.h"
 #include "usys.h"
 #include "ustring.h"
+#include "xos_fcntl.h"
 #include "./libc/include/dirent.h"
 #include "./libc/include/readdir.h"
 #include "printf.h"
-
-#define O_ACCMODE	00000003
-#define O_RDONLY	00000000
-#define O_WRONLY	00000001
-#define O_RDWR		00000002
-
-#define O_DIRECTORY	 040000	/* must be a directory */
-#define O_NOFOLLOW	0100000	/* don't follow links */
-#define O_DIRECT	0200000	/* direct disk access hint - currently ignored */
-#define O_LARGEFILE	0400000
 
 extern int open(const char *pathname, int flag,...);
 

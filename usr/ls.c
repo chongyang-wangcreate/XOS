@@ -64,10 +64,16 @@ static char is_type_char(unsigned char dtype,int mode)
 
 }
 
+
+/*
+    2026.10.17 PM:20:46 struct stat st = {0}; 这个编译器会默认使用memset,但是
+    memset位于内核态，造成用户态执行内核态代码，出现权限报错
+*/
 static void ls_print_msg(const char *path,dirent64_t *dirent,int fmt)
 {
-    struct stat st = {0};
+    struct stat st;
     int ret;
+    user_memset(&st, 0, sizeof(st));
     if(!fmt){
         printf("%s ",dirent->d_name);
         return;
@@ -97,7 +103,7 @@ static int ls_path(const char *path,int long_fmt)
   
     dir = opendir(path);
     if(dir == NULL){
-        printf("ls : can't open %s\n\r",path);
+        printf("ls: cannot open %s\n\r",path);
         return -1;
     }
 
@@ -148,7 +154,6 @@ void shell_ls_cmd(int argc,char *argv[]){
         count++;
     }
     if(count == 0){
-        printf("%s:\n\r","count = 0");
         ls_path(".",long_show_fmt);
         return;
     }
