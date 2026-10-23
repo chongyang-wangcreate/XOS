@@ -140,10 +140,12 @@ int init_block_dev()
     int ret;
     ret = xos_blockdev_init();
     if(ret < 0){
+        printk(PT_ERROR, "xos_blockdev_init failed (ret=%d)\n", ret);
         return ret;
     }
     ret = xos_partition_init();
     if(ret < 0){
+        printk(PT_ERROR, "xos_partition_init failed (ret=%d)\n", ret);
         return ret;
     }
 

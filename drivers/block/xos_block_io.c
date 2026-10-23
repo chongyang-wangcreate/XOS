@@ -42,7 +42,7 @@
 #include "xos_block_io.h"
 #include "xos_block_dev.h"
 
-static int xos_block_io_request_valid(const xos_block_io_request_t *request)
+static int xos_block_io_request_is_valid(const xos_block_io_request_t *request)
 {
     if (request == NULL || request->bdev == NULL) {
         return 0;
@@ -53,15 +53,32 @@ static int xos_block_io_request_valid(const xos_block_io_request_t *request)
     return request->sector_count != 0 && request->buffer != NULL;
 }
 
+static int xos_block_io_merge_requests(xos_blk_req_que_t *queue,
+                                       xos_blk_req_t *first,
+                                       xos_blk_req_t *second);
+
+static const xos_blk_req_que_ops_t xos_block_io_default_ops = {
+//   .merge_requests = block_io_merge_req,
+//   .submit_request = block_io_submit,
+//   .dispatch_requests = block_io_dispatch_req,
+     .merge_requests = xos_block_io_merge_requests,
+    .submit_request = xos_block_io_enqueue,
+    .dispatch_requests = xos_block_io_dispatch,
+};
+
 void xos_block_io_queue_init(xos_block_io_queue_t *queue,
-                             struct xos_blkdev *bdev)
+                             struct xos_block_device *bdev)
 {
+    const xos_blk_req_que_ops_t *ops;
+
     if (queue == NULL) {
         return;
     }
+    ops = queue->ops;
     list_init(&queue->request_list);
     xos_spinlock_init(&queue->lock);
     queue->bdev = bdev;
+    queue->ops = ops == NULL ? &xos_block_io_default_ops : ops;
     queue->current_sector = 0;
     queue->next_sequence = 0;
     queue->pending_count = 0;
@@ -98,24 +115,40 @@ static void xos_block_io_merge_locked(xos_block_io_queue_t *queue,
 {
     second->status = -EINPROGRESS;
     second->merge_next = NULL;
-    if (first->merge_next == NULL) {
+    second->merge_tail = NULL;
+    if (first->merge_tail == NULL) {
         first->merge_next = second;
     } else {
-        xos_block_io_request_t *tail = first->merge_next;
-        while (tail->merge_next != NULL) {
-            tail = tail->merge_next;
-        }
-        tail->merge_next = second;
+        first->merge_tail->merge_next = second;
     }
+    /*
+        更新指向新节点
+    */
+    first->merge_tail = second;
     first->sector_count += second->sector_count;
     queue->merged_count++;
+}
+
+static int xos_block_io_merge_requests(xos_blk_req_que_t *queue,
+                                       xos_blk_req_t *req_first,
+                                       xos_blk_req_t *req_second)
+{
+    if (!xos_block_io_can_merge(req_first, req_second)) {
+        return 0;
+    }
+    /*
+        change xos_block_io_merge to xos_block_io_merge_locked
+        代表io_merge 时已经上锁,参考内核做法
+    */
+    xos_block_io_merge_locked(queue, req_first, req_second);
+    return 1;
 }
 
 int xos_block_io_enqueue(xos_block_io_queue_t *queue,
                          xos_block_io_request_t *request)
 {
     if (queue == NULL || !queue->initialized ||
-        !xos_block_io_request_valid(request) ||
+        !xos_block_io_request_is_valid(request) ||
         request->bdev != queue->bdev) {
         return -EINVAL;
     }
@@ -137,22 +170,30 @@ int xos_block_io_enqueue(xos_block_io_queue_t *queue,
 
     list_init(&request->list);
     request->merge_next = NULL;
+    request->merge_tail = NULL;
     request->status = -EINPROGRESS;
+
+    /*
+        操作共享队列，必须加锁
+    */
     xos_spinlock(&queue->lock);
     request->sequence = queue->next_sequence++;
     request->deadline_tick = kernel_ticks + queue->deadline_ticks;
     {
         dlist_t *node;
         list_for_each(node, (&queue->request_list)) {
-            xos_block_io_request_t *queued =
-                list_entry(node, xos_block_io_request_t, list);
-            if (xos_block_io_can_merge(queued, request)) {
-                xos_block_io_merge_locked(queue, queued, request);
+            xos_block_io_request_t *queued = list_entry(node, xos_block_io_request_t, list);
+            if (queue->ops->merge_requests != NULL &&
+                queue->ops->merge_requests(queue, queued, request) > 0) {
                 xos_unspinlock(&queue->lock);
                 return 0;
             }
         }
     }
+    /*
+        请求入队
+        Add the request to the queue
+    */
     list_add_back(&request->list, &queue->request_list);
     queue->pending_count++;
     xos_unspinlock(&queue->lock);
@@ -162,7 +203,11 @@ int xos_block_io_enqueue(xos_block_io_queue_t *queue,
 int xos_block_io_submit_async(xos_block_io_queue_t *queue,
                               xos_block_io_request_t *request)
 {
-    return xos_block_io_enqueue(queue, request);
+    if (queue == NULL || queue->ops == NULL ||
+        queue->ops->submit_request == NULL) {
+        return -EINVAL;
+    }
+    return queue->ops->submit_request(queue, request);
 }
 
 static xos_block_io_request_t *xos_block_io_pick_locked(
@@ -170,7 +215,7 @@ static xos_block_io_request_t *xos_block_io_pick_locked(
 {
     dlist_t *node;
     xos_block_io_request_t *best = NULL;
-    xos_block_io_request_t *flush = NULL;
+    xos_block_io_request_t *select_req = NULL;
     uint64 distance;
     uint64 best_distance;
     uint64 oldest_deadline = ~0UL;
@@ -198,8 +243,8 @@ static xos_block_io_request_t *xos_block_io_pick_locked(
                 list_entry(node, xos_block_io_request_t, list);
 
             if (request->op == XOS_BLOCK_IO_FLUSH) {
-                if (flush == NULL || request->sequence < flush->sequence) {
-                    flush = request;
+                if (select_req == NULL || request->sequence < select_req->sequence) {
+                    select_req = request;
                 }
                 continue;
             }
@@ -226,12 +271,12 @@ static xos_block_io_request_t *xos_block_io_pick_locked(
         }
         queue->direction = -queue->direction;
     }
-    return flush;
+    return select_req;
 }
 
 static int xos_block_io_execute(xos_block_io_request_t *request)
 {
-    xos_blkdev_t *bdev = request->bdev;
+    xos_block_device_t *bdev = request->bdev;
 
     if (!bdev->registered || bdev->ops == NULL) {
         return -ENODEV;
@@ -311,7 +356,7 @@ int xos_block_io_dispatch_locked(xos_block_io_queue_t *queue)
 
 int xos_block_io_dispatch(xos_block_io_queue_t *queue)
 {
-    xos_blkdev_t *bdev;
+    xos_block_device_t *bdev;
     int dispatched;
 
     if (queue == NULL || !queue->initialized || queue->bdev == NULL) {

@@ -18,18 +18,58 @@
 #include "path.h"
 #include "xos_file.h"
 #include "xnode.h"
+#include "xos_block_dev.h"
+#include "xos_ext4.h"
 
 
 /*
-    ext4 filesystem type registration.
-    Actual ext4 mount/read/write not yet implemented.
-    init_file_ext4fs currently just allocates a superblock stub.
+ * ext4 filesystem type registration.
 */
 
-xsuperblock *init_file_ext4fs(struct xos_vfs_file_type *fs_name,int flags,const char *dev_name,void *data)
+static uint16 xos_ext4_get_le16(const uint8 *value)
 {
+    return (uint16)value[0] | ((uint16)value[1] << 8);
+}
 
-    return NULL;
+int xos_ext4_read_superblock(struct xos_block_device *bdev,
+                             void *buffer,
+                             uint32 buffer_size)
+{
+    if (bdev == NULL || buffer == NULL ||
+        buffer_size < 1024U) {
+        return -EINVAL;
+    }
+    return xos_blockdev_read(bdev, XOS_EXT4_SUPERBLOCK_OFFSET,
+                             buffer, buffer_size);
+}
+
+static int xos_ext4_mount(struct xos_vfs_file_type *fs_name,
+                          struct xos_block_device *bdev,
+                          int flags,
+                          const char *dev_name,
+                          void *data,
+                          xsuperblock **out_super)
+{
+    uint8 superblock[1024];
+
+    if (fs_name == NULL || bdev == NULL || out_super == NULL) {
+        return -EINVAL;
+    }
+    *out_super = NULL;
+
+    if (xos_ext4_read_superblock(bdev, superblock, sizeof(superblock)) < 0) {
+        return -EIO;
+    }
+    if (xos_ext4_get_le16(superblock + 56) != XOS_EXT4_SUPER_MAGIC) {
+        return -EINVAL;
+    }
+
+    /*
+     * The block device contract is now sufficient for ext4 superblock
+     * parsing. Root inode and directory operations are implemented in the
+     * next ext4 layer and must be added before this mount is exposed.
+     */
+    return -ENOSYS;
 }
 
 
@@ -50,8 +90,9 @@ void release_ext4fs(xsuperblock *super)
 
 xvfs_file_t  ext4_fs_type={
     .fs_type = "ext4fs",
-    .init_file_system = init_file_ext4fs,
-    .init_file_system_old = NULL,
+    .fs_flags = XOS_FS_REQUIRES_BLOCK,
+    .mount = xos_ext4_mount,
+    .init_file_system = NULL,
     .release_file_system = release_ext4fs,
 
 };

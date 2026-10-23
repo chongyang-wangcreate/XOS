@@ -9,83 +9,128 @@
 #include "xos_block_io.h"
 #include "fs.h"
 #include "xos_sem.h"
-#include "xos_disk.h"
 
 #define XOS_BLOCKDEV_NAME_MAX 32
 #define XOS_BLOCKDEV_DEFAULT_SECTOR_SIZE 512U
+#define XOS_BLOCKDEV_SCRATCH_SIZE 4096U
 
 #define XOS_BLOCKDEV_READ_ONLY (1U << 0)
 #define XOS_BLOCKDEV_REMOVABLE (1U << 1)
 
-struct xos_blkdev;
+struct xos_block_device;
+struct xos_disk_device;
+struct xos_partition;
 
-typedef int (*xos_blockdev_read_fn)(struct xos_blkdev *bdev,
-                                    uint64  sector,
-                                    void    *buffer,
-                                    uint32  sector_count);
-typedef int (*xos_blockdev_write_fn)(struct xos_blkdev *bdev,
+typedef struct xos_block_device xos_block_device_t;
+
+typedef int (*xos_blockdev_read_fn)(xos_block_device_t *bdev,
+                                    uint64 sector,
+                                    void *buffer,
+                                    uint32 sector_count);
+typedef int (*xos_blockdev_write_fn)(xos_block_device_t *bdev,
                                      uint64 sector,
                                      const void *buffer,
                                      uint32 sector_count);
-typedef int (*xos_blockdev_flush_fn)(struct xos_blkdev *bdev);
+typedef int (*xos_blockdev_flush_fn)(xos_block_device_t *bdev);
+typedef int (*xos_blockdev_open_fn)(xos_block_device_t *bdev);
+typedef int (*xos_blockdev_release_fn)(xos_block_device_t *bdev);
 
 
-
-typedef struct xos_blkdev_ops {
+typedef struct xos_block_device_ops {
+    xos_blockdev_open_fn open;
+    xos_blockdev_release_fn release;
     xos_blockdev_read_fn read_sectors;
     xos_blockdev_write_fn write_sectors;
     xos_blockdev_flush_fn flush;
-} xos_blkdev_ops_t;
+} xos_block_device_ops_t;
 
-typedef struct xos_blkdev {
+
+typedef xos_block_device_t xos_blkdev_t;
+typedef xos_block_device_ops_t xos_blkdev_ops_t;
+
+
+struct xos_block_device {
     dlist_t list;
+    dlist_t inodes;
     xos_spinlock_t lock;
     xos_spinlock_t io_lock;
+    xsem_t sem;
+
     char name[XOS_BLOCKDEV_NAME_MAX];
     devno_t devno;
     uint32 sector_size;
     uint64 sector_count;
     uint32 flags;
+
     uint32 ref_count;
     int registered;
+    int hold_count;
+    int open_count;
+    int open_partitions;
+
+    void *owner;
+    struct xos_inode *block_node;
+    struct xos_block_device *parent;
+    struct xos_disk_device *disk;
+    struct xos_partition *partition;
+
     void *private_data;
-    const xos_blkdev_ops_t *ops;
-    xos_block_io_queue_t io_queue;
-} xos_blkdev_t;
+    const xos_block_device_ops_t *ops;
+    xos_blk_req_que_t request_queue;
+};
+
+
+void xos_blockdev_init_device(xos_block_device_t *bdev,
+                              const char *name,
+                              devno_t devno,
+                              uint32 sector_size,
+                              uint64 sector_count,
+                              uint32 flags,
+                              const xos_block_device_ops_t *ops,
+                              void *private_data);
 
 int xos_blockdev_init(void);
-int xos_blockdev_register(xos_blkdev_t *bdev);
-int xos_blockdev_unregister(xos_blkdev_t *bdev);
+int xos_blockdev_register(xos_block_device_t *bdev);
+int xos_blockdev_unregister(xos_block_device_t *bdev);
 
-xos_blkdev_t *xos_blockdev_get_by_name(const char *name);
-xos_blkdev_t *xos_blockdev_get_by_devno(devno_t devno);
-void xos_blockdev_get(xos_blkdev_t *bdev);
-void xos_blockdev_put(xos_blkdev_t *bdev);
+xos_block_device_t *xos_blockdev_get_by_name(const char *name);
+xos_block_device_t *xos_blockdev_get_by_devno(devno_t devno);
+void xos_blockdev_get(xos_block_device_t *bdev);
+void xos_blockdev_put(xos_block_device_t *bdev);
+int xos_blockdev_open(xos_block_device_t *bdev);
+int xos_blockdev_release(xos_block_device_t *bdev);
 
-int xos_blockdev_read_sectors(xos_blkdev_t *bdev,
+int xos_blockdev_read_sectors(xos_block_device_t *bdev,
                               uint64 sector,
                               void *buffer,
                               uint32 sector_count);
-
-int xos_blockdev_write_sectors(xos_blkdev_t *bdev,
+int xos_blockdev_write_sectors(xos_block_device_t *bdev,
                                uint64 sector,
                                const void *buffer,
                                uint32 sector_count);
+int xos_blockdev_flush(xos_block_device_t *bdev);
 
-int xos_blockdev_flush(xos_blkdev_t *bdev);
-
-
-int xos_blockdev_read(xos_blkdev_t *bdev,
+int xos_blockdev_read(xos_block_device_t *bdev,
                       uint64 offset,
                       void *buffer,
                       uint32 length);
-
-int xos_blockdev_write(xos_blkdev_t *bdev,
+int xos_blockdev_write(xos_block_device_t *bdev,
                        uint64 offset,
                        const void *buffer,
                        uint32 length);
 
-static inline uint64 xos_blockdev_capacity_bytes(const xos_blkdev_t *bdev)
+
+int xos_blockdev_read_block(xos_block_device_t *bdev,
+                            uint64 block,
+                            uint32 block_size,
+                            void *buffer);
+int xos_blockdev_write_block(xos_block_device_t *bdev,
+                             uint64 block,
+                             uint32 block_size,
+                             const void *buffer);
+
+static inline uint64
+xos_blockdev_capacity_bytes(const xos_block_device_t *bdev)
 {
     if (bdev == NULL) {
         return 0;
@@ -93,82 +138,12 @@ static inline uint64 xos_blockdev_capacity_bytes(const xos_blkdev_t *bdev)
     return bdev->sector_count * (uint64)bdev->sector_size;
 }
 
-/*
-    I/O queue helpers: submit requests through the elevator/scheduler
-    and dispatch pending I/O.  These wrap xos_block_io_enqueue/dispatch.
-*/
-int xos_blockdev_submit_io(xos_blkdev_t *bdev,
-                           xos_block_io_request_t *req);
-int xos_blockdev_dispatch_io(xos_blkdev_t *bdev);
+int xos_blockdev_submit_io(xos_block_device_t *bdev, xos_blk_req_t *req);
+int xos_blockdev_dispatch_io(xos_block_device_t *bdev);
 
-/*
-    add_disk: register device + auto-scan partitions (GPT first, MBR fallback).
-    Equivalent to Linux add_disk().  Returns number of partitions found (>=0)
-    or negative error code.
-*/
-int xos_blockdev_add_disk(xos_blkdev_t *bdev);
+int xos_blockdev_add_disk(struct xos_disk_device *disk);
+int xos_blockdev_del_disk(struct xos_disk_device *disk);
 
-/*
-    del_disk: remove all partitions + unregister the device.
-    Equivalent to Linux del_gendisk().
-*/
-int xos_blockdev_del_disk(xos_blkdev_t *bdev);
-
-
-
-/*
-    VFS-level block device descriptor.
-    This is the block device as seen by the VFS layer,
-    distinct from the low-level driver struct xos_blkdev.
-*/
-struct xos_block_device {
-
-    void *owner; /* block device descriptor current owner */
-
-    struct xos_inode *block_node; /* block device node */
-
-    devno_t devno; /* device number */
-
-    dlist_t block_list; /* connect block list */
-
-    dlist_t inodes; /* manage block device node list head */
-
-    int hold_count; /* exclusive access counter */
-
-    int open_count;   /* how many times device has been opened */
-
-    int open_partitions; /* how many partitions opened */
-
-    struct xos_block_device *container; /* if partition, points to whole disk */
-
-    xos_disk_dev_t *disk; /* disk device descriptor */
-
-    struct partition_desc *partition; /* if partition, points to partition desc */
-
-    xsem_t sem;
-    /*
-        to do
-    */
-
-};
-
-
-
-typedef struct xos_block_request_desc{
-
-/*
-    to do
-*/
-
-}xos_blk_req_t;
-
-typedef struct xos_block_request_queue_desc{
-
-    int (*merge_requests) (struct xos_block_request_queue_desc *, xos_blk_req_t *,
-				xos_blk_req_t *);
-
-	int (*sumit_request)(struct xos_block_request_queue_desc *queue, xos_block_io_queue_t *bio);
-
-}xos_blk_req_que;
+extern xfile_ops_t xos_blockdev_file_ops;
 
 #endif

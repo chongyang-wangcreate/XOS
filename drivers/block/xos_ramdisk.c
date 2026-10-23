@@ -34,13 +34,15 @@
 #include "xos_page.h"
 #include "xos_cache.h"
 #include "xos_block_dev.h"
+#include "xos_disk.h"
+#include "xos_partition.h"
 #include "xos_ramdisk.h"
 
 static uint8 xos_ramdisk_storage[XOS_RAMDISK_SIZE_BYTES];
-static xos_blkdev_t xos_ramdisk_dev;
-static int xos_ramdisk_ready;
+static xos_disk_dev_t xos_ramdisk_disk;
+static int xos_ramdisk_is_ready;
 
-static int xos_ramdisk_read_sectors(xos_blkdev_t *bdev,
+static int xos_ramdisk_read_sectors(xos_block_device_t *bdev,
                                      uint64 sector,
                                      void *buffer,
                                      uint32 sector_count)
@@ -48,14 +50,17 @@ static int xos_ramdisk_read_sectors(xos_blkdev_t *bdev,
     uint64 offset;
     uint64 length;
 
-    if (bdev == NULL || buffer == NULL || bdev->private_data == NULL) {
+    if (bdev == NULL || buffer == NULL || bdev->private_data == NULL ||
+        sector_count == 0 || sector >= bdev->sector_count ||
+        sector_count > bdev->sector_count - sector) {
         return -EINVAL;
     }
 
     offset = sector * (uint64)bdev->sector_size;
     length = (uint64)sector_count * (uint64)bdev->sector_size;
 
-    if (offset + length > XOS_RAMDISK_SIZE_BYTES) {
+    if (offset > XOS_RAMDISK_SIZE_BYTES ||
+        length > XOS_RAMDISK_SIZE_BYTES - offset) {
         return -EINVAL;
     }
 
@@ -63,7 +68,7 @@ static int xos_ramdisk_read_sectors(xos_blkdev_t *bdev,
     return 0;
 }
 
-static int xos_ramdisk_write_sectors(xos_blkdev_t *bdev,
+static int xos_ramdisk_write_sectors(xos_block_device_t *bdev,
                                       uint64 sector,
                                       const void *buffer,
                                       uint32 sector_count)
@@ -71,14 +76,17 @@ static int xos_ramdisk_write_sectors(xos_blkdev_t *bdev,
     uint64 offset;
     uint64 length;
 
-    if (bdev == NULL || buffer == NULL || bdev->private_data == NULL) {
+    if (bdev == NULL || buffer == NULL || bdev->private_data == NULL ||
+        sector_count == 0 || sector >= bdev->sector_count ||
+        sector_count > bdev->sector_count - sector) {
         return -EINVAL;
     }
 
     offset = sector * (uint64)bdev->sector_size;
     length = (uint64)sector_count * (uint64)bdev->sector_size;
 
-    if (offset + length > XOS_RAMDISK_SIZE_BYTES) {
+    if (offset > XOS_RAMDISK_SIZE_BYTES ||
+        length > XOS_RAMDISK_SIZE_BYTES - offset) {
         return -EINVAL;
     }
 
@@ -86,7 +94,7 @@ static int xos_ramdisk_write_sectors(xos_blkdev_t *bdev,
     return 0;
 }
 
-static int xos_ramdisk_flush(xos_blkdev_t *bdev)
+static int xos_ramdisk_flush(xos_block_device_t *bdev)
 {
     if (bdev == NULL) {
         return -EINVAL;
@@ -94,7 +102,7 @@ static int xos_ramdisk_flush(xos_blkdev_t *bdev)
     return 0;
 }
 
-static const xos_blkdev_ops_t xos_ramdisk_ops = {
+static const xos_block_device_ops_t xos_ramdisk_ops = {
     .read_sectors = xos_ramdisk_read_sectors,
     .write_sectors = xos_ramdisk_write_sectors,
     .flush = xos_ramdisk_flush,
@@ -102,30 +110,29 @@ static const xos_blkdev_ops_t xos_ramdisk_ops = {
 
 int xos_ramdisk_init(void)
 {
+    xos_block_device_t *bdev;
     int ret;
 
-    if (xos_ramdisk_ready) {
+    if (xos_ramdisk_is_ready) {
         return 0;
     }
 
     memset(xos_ramdisk_storage, 0, sizeof(xos_ramdisk_storage));
-    memset(&xos_ramdisk_dev, 0, sizeof(xos_ramdisk_dev));
-
-    strcpy(xos_ramdisk_dev.name, "ram0");
-    xos_ramdisk_dev.devno = XOS_RAMDISK_DEV_MAJOR;
-    xos_ramdisk_dev.sector_size = XOS_RAMDISK_SECTOR_SIZE;
-    xos_ramdisk_dev.sector_count = XOS_RAMDISK_SECTOR_COUNT;
-    xos_ramdisk_dev.flags = 0;
-    xos_ramdisk_dev.private_data = xos_ramdisk_storage;
-    xos_ramdisk_dev.ops = &xos_ramdisk_ops;
-
-    ret = xos_blockdev_add_disk(&xos_ramdisk_dev);
+    memset(&xos_ramdisk_disk, 0, sizeof(xos_ramdisk_disk));
+    bdev = xos_disk_to_block(&xos_ramdisk_disk);
+    xos_blockdev_init_device(bdev, "ram0", XOS_RAMDISK_DEV_MAJOR,
+                             XOS_RAMDISK_SECTOR_SIZE,
+                             XOS_RAMDISK_SECTOR_COUNT, 0,
+                             &xos_ramdisk_ops, xos_ramdisk_storage);
+    xos_ramdisk_disk.max_partition_count = XOS_PARTITION_MAX;
+    xos_ramdisk_disk.private_data = xos_ramdisk_storage;
+    ret = xos_blockdev_add_disk(&xos_ramdisk_disk);
     if (ret < 0) {
         printk(PT_ERROR, "ramdisk: add_disk failed (ret=%d)\n", ret);
         return ret;
     }
 
-    xos_ramdisk_ready = 1;
+    xos_ramdisk_is_ready = 1;
     printk(PT_DEBUG,
            "ramdisk: registered ram0, %u sectors, %u bytes/sector\n",
            XOS_RAMDISK_SECTOR_COUNT, XOS_RAMDISK_SECTOR_SIZE);
@@ -134,12 +141,12 @@ int xos_ramdisk_init(void)
 
 void xos_ramdisk_exit(void)
 {
-    if (!xos_ramdisk_ready) {
+    if (!xos_ramdisk_is_ready) {
         return;
     }
 
-    xos_blockdev_del_disk(&xos_ramdisk_dev);
+    xos_blockdev_del_disk(&xos_ramdisk_disk);
     memset(xos_ramdisk_storage, 0, sizeof(xos_ramdisk_storage));
-    memset(&xos_ramdisk_dev, 0, sizeof(xos_ramdisk_dev));
-    xos_ramdisk_ready = 0;
+    memset(&xos_ramdisk_disk, 0, sizeof(xos_ramdisk_disk));
+    xos_ramdisk_is_ready = 0;
 }

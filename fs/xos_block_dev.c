@@ -4,9 +4,9 @@
 #include "error.h"
 #include "spinlock.h"
 #include "xos_block_dev.h"
+#include "xos_disk.h"
 #include "xos_partition.h"
 #include "printk.h"
-
 
 /*
     2025.7.22 嘉兴平湖乍浦海边，看到一排排排放整齐的船突然想起我一直待开发的块设备，给了我很大灵感，每艘船就像一个个磁盘块
@@ -17,9 +17,44 @@
 */
 static dlist_t xos_blockdev_list;
 static xos_spinlock_t xos_blockdev_list_lock;
-static int xos_blockdev_ready;
+static int xos_blockdev_is_ready;
 
-static int xos_blockdev_valid(const xos_blkdev_t *bdev)
+void xos_blockdev_init_device(xos_block_device_t *bdev,
+                              const char *name,
+                              devno_t devno,
+                              uint32 sector_size,
+                              uint64 sector_count,
+                              uint32 flags,
+                              const xos_block_device_ops_t *ops,
+                              void *private_data)
+{
+    char name_copy[XOS_BLOCKDEV_NAME_MAX];
+    uint32 name_length;
+
+    if (bdev == NULL) {
+        return;
+    }
+
+    name_length = 0;
+    if (name != NULL) {
+        name_length = strlen(name);
+        if (name_length >= XOS_BLOCKDEV_NAME_MAX) {
+            name_length = XOS_BLOCKDEV_NAME_MAX - 1;
+        }
+        memcpy(name_copy, name, name_length);
+    }
+    name_copy[name_length] = '\0';
+    memset(bdev, 0, sizeof(*bdev));
+    memcpy(bdev->name, name_copy, name_length + 1);
+    bdev->devno = devno;
+    bdev->sector_size = sector_size;
+    bdev->sector_count = sector_count;
+    bdev->flags = flags;
+    bdev->private_data = private_data;
+    bdev->ops = ops;
+}
+
+static int xos_blockdev_is_valid(const xos_block_device_t *bdev)
 {
     if (bdev == NULL || bdev->name[0] == '\0' ||
         bdev->ops == NULL || bdev->ops->read_sectors == NULL ||
@@ -29,7 +64,7 @@ static int xos_blockdev_valid(const xos_blkdev_t *bdev)
     return 1;
 }
 
-static int xos_blockdev_range_valid(const xos_blkdev_t *bdev,
+static int xos_blockdev_range_is_valid(const xos_block_device_t *bdev,
                                     uint64 sector,
                                     uint32 sector_count)
 {
@@ -47,32 +82,32 @@ static int xos_blockdev_range_valid(const xos_blkdev_t *bdev,
 
 int xos_blockdev_init(void)
 {
-    if (xos_blockdev_ready) {
+    if (xos_blockdev_is_ready) {
         return 0;
     }
 
     list_init(&xos_blockdev_list);
     xos_spinlock_init(&xos_blockdev_list_lock);
-    xos_blockdev_ready = 1;
+    xos_blockdev_is_ready = 1;
     return 0;
 }
 
-int xos_blockdev_register(xos_blkdev_t *bdev)
+int xos_blockdev_register(xos_block_device_t *bdev)
 {
     dlist_t *node;
-    xos_blkdev_t *registered;
+    xos_block_device_t *registered;
 
-    if (!xos_blockdev_ready) {
+    if (!xos_blockdev_is_ready) {
         return -ENODEV;
     }
-    if (!xos_blockdev_valid(bdev) ||
+    if (!xos_blockdev_is_valid(bdev) ||
         strlen(bdev->name) >= XOS_BLOCKDEV_NAME_MAX) {
         return -EINVAL;
     }
 
     xos_spinlock(&xos_blockdev_list_lock);
     list_for_each(node, (&xos_blockdev_list)) {
-        registered = list_entry(node, xos_blkdev_t, list);
+        registered = list_entry(node, xos_block_device_t, list);
         if (registered->devno == bdev->devno ||
             strcmp(registered->name, bdev->name) == 0) {
             xos_unspinlock(&xos_blockdev_list_lock);
@@ -81,20 +116,85 @@ int xos_blockdev_register(xos_blkdev_t *bdev)
     }
 
     list_init(&bdev->list);
+    list_init(&bdev->inodes);
     xos_spinlock_init(&bdev->lock);
     xos_spinlock_init(&bdev->io_lock);
+    sem_init(&bdev->sem, 1, SEM_MUTEXT);
     bdev->ref_count = 1;
     bdev->registered = 1;
-    /* Initialize the per-device I/O request queue (elevator scheduler) */
-    xos_block_io_queue_init(&bdev->io_queue, bdev);
+    if (bdev->parent == NULL) {
+        bdev->parent = bdev;
+    }
+    /*
+        新增IO 调度
+    */
+    xos_block_io_queue_init(&bdev->request_queue, bdev);
     list_add_back(&bdev->list, &xos_blockdev_list);
     xos_unspinlock(&xos_blockdev_list_lock);
     return 0;
 }
 
-int xos_blockdev_unregister(xos_blkdev_t *bdev)
+int xos_blockdev_open(xos_block_device_t *bdev)
 {
-    if (!xos_blockdev_ready || bdev == NULL) {
+    int ret = 0;
+
+    if (bdev == NULL || !bdev->registered) {
+        return -ENODEV;
+    }
+
+    xos_spinlock(&bdev->lock);
+    if (!bdev->registered) {
+        xos_unspinlock(&bdev->lock);
+        return -ENODEV;
+    }
+    bdev->open_count++;
+    bdev->ref_count++;
+    xos_unspinlock(&bdev->lock);
+
+    if (bdev->ops != NULL && bdev->ops->open != NULL) {
+        ret = bdev->ops->open(bdev);
+        if (ret < 0) {
+            xos_spinlock(&bdev->lock);
+            if (bdev->open_count > 0) {
+                bdev->open_count--;
+            }
+            if (bdev->ref_count > 0) {
+                bdev->ref_count--;
+            }
+            xos_unspinlock(&bdev->lock);
+        }
+    }
+    return ret;
+}
+
+int xos_blockdev_release(xos_block_device_t *bdev)
+{
+    int ret = 0;
+
+    if (bdev == NULL || !bdev->registered) {
+        return -ENODEV;
+    }
+
+    xos_spinlock(&bdev->lock);
+    if (bdev->open_count == 0) {
+        xos_unspinlock(&bdev->lock);
+        return -EINVAL;
+    }
+    bdev->open_count--;
+    if (bdev->ref_count > 0) {
+        bdev->ref_count--;
+    }
+    xos_unspinlock(&bdev->lock);
+
+    if (bdev->ops != NULL && bdev->ops->release != NULL) {
+        ret = bdev->ops->release(bdev);
+    }
+    return ret;
+}
+
+int xos_blockdev_unregister(xos_block_device_t *bdev)
+{
+    if (!xos_blockdev_is_ready || bdev == NULL) {
         return -EINVAL;
     }
 
@@ -105,7 +205,8 @@ int xos_blockdev_unregister(xos_blkdev_t *bdev)
     }
 
     xos_spinlock(&bdev->lock);
-    if (bdev->ref_count != 1) {
+    if (bdev->ref_count != 1 ||
+        xos_block_io_pending(&bdev->request_queue) != 0) {
         xos_unspinlock(&bdev->lock);
         xos_unspinlock(&xos_blockdev_list_lock);
         return -EBUSY;
@@ -119,7 +220,7 @@ int xos_blockdev_unregister(xos_blkdev_t *bdev)
     return 0;
 }
 
-void xos_blockdev_get(xos_blkdev_t *bdev)
+void xos_blockdev_get(xos_block_device_t *bdev)
 {
     if (bdev == NULL) {
         return;
@@ -131,7 +232,7 @@ void xos_blockdev_get(xos_blkdev_t *bdev)
     xos_unspinlock(&bdev->lock);
 }
 
-void xos_blockdev_put(xos_blkdev_t *bdev)
+void xos_blockdev_put(xos_block_device_t *bdev)
 {
     if (bdev == NULL) {
         return;
@@ -143,20 +244,20 @@ void xos_blockdev_put(xos_blkdev_t *bdev)
     xos_unspinlock(&bdev->lock);
 }
 
-static xos_blkdev_t *xos_blockdev_get_match(devno_t devno,
+static xos_block_device_t *xos_blockdev_get_match(devno_t devno,
                                                    const char *name,
                                                    int match_name)
 {
     dlist_t *node;
-    xos_blkdev_t *bdev;
+    xos_block_device_t *bdev;
 
-    if (!xos_blockdev_ready) {
+    if (!xos_blockdev_is_ready) {
         return NULL;
     }
 
     xos_spinlock(&xos_blockdev_list_lock);
     list_for_each(node, (&xos_blockdev_list)) {
-        bdev = list_entry(node, xos_blkdev_t, list);
+        bdev = list_entry(node, xos_block_device_t, list);
         if ((match_name && strcmp(bdev->name, name) == 0) ||
             (!match_name && bdev->devno == devno)) {
             xos_spinlock(&bdev->lock);
@@ -174,7 +275,7 @@ static xos_blkdev_t *xos_blockdev_get_match(devno_t devno,
     return NULL;
 }
 
-xos_blkdev_t *xos_blockdev_get_by_name(const char *name)
+xos_block_device_t *xos_blockdev_get_by_name(const char *name)
 {
     if (name == NULL) {
         return NULL;
@@ -182,19 +283,19 @@ xos_blkdev_t *xos_blockdev_get_by_name(const char *name)
     return xos_blockdev_get_match(0, name, 1);
 }
 
-xos_blkdev_t *xos_blockdev_get_by_devno(devno_t devno)
+xos_block_device_t *xos_blockdev_get_by_devno(devno_t devno)
 {
     return xos_blockdev_get_match(devno, NULL, 0);
 }
 
-int xos_blockdev_read_sectors(xos_blkdev_t *bdev,
+int xos_blockdev_read_sectors(xos_block_device_t *bdev,
                               uint64 sector,
                               void *buffer,
                               uint32 sector_count)
 {
     xos_block_io_request_t req;
 
-    if (buffer == NULL || !xos_blockdev_range_valid(bdev, sector,
+    if (buffer == NULL || !xos_blockdev_range_is_valid(bdev, sector,
                                                      sector_count)) {
         return -EINVAL;
     }
@@ -204,10 +305,7 @@ int xos_blockdev_read_sectors(xos_blkdev_t *bdev,
     }
 
     /*
-        Build a synchronous I/O request and route it through the
-        device elevator scheduler queue.  The request is enqueued
-        then dispatched immediately (single-request flush).  After
-        dispatch completes, req.status holds the driver return code.
+        初始化请求队列
     */
     req.op            = XOS_BLOCK_IO_READ;
     req.sector        = sector;
@@ -223,14 +321,14 @@ int xos_blockdev_read_sectors(xos_blkdev_t *bdev,
     return req.status;
 }
 
-int xos_blockdev_write_sectors(xos_blkdev_t *bdev,
+int xos_blockdev_write_sectors(xos_block_device_t *bdev,
                                uint64 sector,
                                const void *buffer,
                                uint32 sector_count)
 {
     xos_block_io_request_t req;
 
-    if (buffer == NULL || !xos_blockdev_range_valid(bdev, sector,
+    if (buffer == NULL || !xos_blockdev_range_is_valid(bdev, sector,
                                                      sector_count)) {
         return -EINVAL;
     }
@@ -256,7 +354,7 @@ int xos_blockdev_write_sectors(xos_blkdev_t *bdev,
     return req.status;
 }
 
-int xos_blockdev_flush(xos_blkdev_t *bdev)
+int xos_blockdev_flush(xos_block_device_t *bdev)
 {
     xos_block_io_request_t req;
 
@@ -282,15 +380,10 @@ int xos_blockdev_flush(xos_blkdev_t *bdev)
 }
 
 
-/*
-    Byte-level read: translates arbitrary offset+length into sector reads.
-    Handles partial head sector, full middle sectors, and partial tail sector.
-    Uses a stack scratch buffer for partial-sector unaligned head/tail reads.
-    For aligned middle sectors, reads directly into the caller buffer.
-*/
-#define XOS_BLOCKDEV_SCRATCH_SIZE 512
 
-int xos_blockdev_read(xos_blkdev_t *bdev,
+
+
+int xos_blockdev_read(xos_block_device_t *bdev,
                       uint64 offset,
                       void *buffer,
                       uint32 length)
@@ -304,7 +397,6 @@ int xos_blockdev_read(xos_blkdev_t *bdev,
     uint32 head_skip;
     uint32 tail_len;
     uint32 mid_count;
-    uint64 mid_last;
     uint32 head_off;
     int ret;
 
@@ -335,6 +427,7 @@ int xos_blockdev_read(xos_blkdev_t *bdev,
 
     /* --- head: partial sector at the start --- */
     if (head_skip != 0) {
+        printk(PT_DEBUG,"%s:%d,read first sector\n\r",__FUNCTION__,__LINE__);
         ret = xos_blockdev_read_sectors(bdev, first_sector, scratch, 1);
         if (ret < 0) {
             return ret;
@@ -360,22 +453,24 @@ int xos_blockdev_read(xos_blkdev_t *bdev,
     }
 
     /* --- middle: full sectors, read directly into caller buffer --- */
-    mid_last = last_sector;
-    if (tail_len != 0) {
-        mid_last = last_sector - 1;
+    if (first_sector <= last_sector) {
+        mid_count = (uint32)(last_sector - first_sector + 1) -
+                    (tail_len != 0 ? 1U : 0U);
+    } else {
+        mid_count = 0;
     }
-    if (first_sector <= mid_last) {
-        mid_count = (uint32)(mid_last - first_sector + 1);
+    if (mid_count != 0) {
         ret = xos_blockdev_read_sectors(bdev, first_sector, buf, mid_count);
         if (ret < 0) {
             return ret;
         }
-        buf += mid_count * sector_size;
-        first_sector = mid_last + 1;
+        buf += (size_t)mid_count * sector_size;
+        first_sector += mid_count;
     }
 
     /* --- tail: partial sector at end --- */
     if (tail_len != 0) {
+        printk(PT_DEBUG,"%s:%d,read tail sector\n\r",__FUNCTION__,__LINE__);
         ret = xos_blockdev_read_sectors(bdev, first_sector, scratch, 1);
         if (ret < 0) {
             return ret;
@@ -386,13 +481,8 @@ int xos_blockdev_read(xos_blkdev_t *bdev,
     return 0;
 }
 
-/*
-    Byte-level write: translates arbitrary offset+length into sector writes.
-    For partial head/tail sectors, reads the existing sector first, modifies
-    the relevant bytes, then writes back. Full middle sectors are written
-    directly from the caller buffer.
-*/
-int xos_blockdev_write(xos_blkdev_t *bdev,
+
+int xos_blockdev_write(xos_block_device_t *bdev,
                        uint64 offset,
                        const void *buffer,
                        uint32 length)
@@ -406,7 +496,6 @@ int xos_blockdev_write(xos_blkdev_t *bdev,
     uint32 head_skip;
     uint32 tail_len;
     uint32 mid_count;
-    uint64 mid_last;
     uint32 head_off;
     uint32 tail_off;
     int ret;
@@ -469,18 +558,19 @@ int xos_blockdev_write(xos_blkdev_t *bdev,
     }
 
     /* --- middle: full sectors, write directly --- */
-    mid_last = last_sector;
-    if (tail_len != 0) {
-        mid_last = last_sector - 1;
+    if (first_sector <= last_sector) {
+        mid_count = (uint32)(last_sector - first_sector + 1) -
+                    (tail_len != 0 ? 1U : 0U);
+    } else {
+        mid_count = 0;
     }
-    if (first_sector <= mid_last) {
-        mid_count = (uint32)(mid_last - first_sector + 1);
+    if (mid_count != 0) {
         ret = xos_blockdev_write_sectors(bdev, first_sector, buf, mid_count);
         if (ret < 0) {
             return ret;
         }
-        buf += mid_count * sector_size;
-        first_sector = mid_last + 1;
+        buf += (size_t)mid_count * sector_size;
+        first_sector += mid_count;
     }
 
     /* --- tail: read-modify-write --- */
@@ -499,53 +589,102 @@ int xos_blockdev_write(xos_blkdev_t *bdev,
     return 0;
 }
 
+int xos_blockdev_read_block(xos_block_device_t *bdev,
+                            uint64 block,
+                            uint32 block_size,
+                            void *buffer)
+{
+    uint64 sectors_per_block;
+    uint64 sector;
+
+    if (bdev == NULL || buffer == NULL || block_size == 0 ||
+        bdev->sector_size == 0 ||
+        block_size % bdev->sector_size != 0) {
+        return -EINVAL;
+    }
+    sectors_per_block = block_size / bdev->sector_size;
+    if (sectors_per_block > 0xffffffffUL) {
+        return -EOVERFLOW;
+    }
+    if (block > (~0UL) / sectors_per_block) {
+        return -ERANGE;
+    }
+    sector = block * sectors_per_block;
+    return xos_blockdev_read_sectors(bdev, sector, buffer,
+                                     (uint32)sectors_per_block);
+}
+
+int xos_blockdev_write_block(xos_block_device_t *bdev,
+                             uint64 block,
+                             uint32 block_size,
+                             const void *buffer)
+{
+    uint64 sectors_per_block;
+    uint64 sector;
+
+    if (bdev == NULL || buffer == NULL || block_size == 0 ||
+        bdev->sector_size == 0 ||
+        block_size % bdev->sector_size != 0) {
+        return -EINVAL;
+    }
+    sectors_per_block = block_size / bdev->sector_size;
+    if (sectors_per_block > 0xffffffffUL) {
+        return -EOVERFLOW;
+    }
+    if (block > (~0UL) / sectors_per_block) {
+        return -ERANGE;
+    }
+    sector = block * sectors_per_block;
+    return xos_blockdev_write_sectors(bdev, sector, buffer,
+                                      (uint32)sectors_per_block);
+}
+
 /*
     Submit an I/O request through the device's elevator scheduler.
-    The request is enqueued and may be merged with adjacent pending
-    requests.  Call xos_blockdev_dispatch_io() to drain the queue.
 */
-int xos_blockdev_submit_io(xos_blkdev_t *bdev,
-                           xos_block_io_request_t *req)
+int xos_blockdev_submit_io(xos_block_device_t *bdev, xos_blk_req_t *req)
 {
-    if (bdev == NULL || req == NULL || !bdev->registered) {
+    if (bdev == NULL || req == NULL || !bdev->registered ||
+        bdev->request_queue.ops == NULL ||
+        bdev->request_queue.ops->submit_request == NULL) {
         return -EINVAL;
     }
     req->bdev = bdev;
-    return xos_block_io_enqueue(&bdev->io_queue, req);
+    return bdev->request_queue.ops->submit_request(&bdev->request_queue, req);
 }
 
-/*
-    Dispatch all pending I/O requests on this device's queue.
-    Requests are picked by the elevator algorithm (SCAN + deadline),
-    executed synchronously, and completion callbacks are invoked.
-*/
-int xos_blockdev_dispatch_io(xos_blkdev_t *bdev)
+
+int xos_blockdev_dispatch_io(xos_block_device_t *bdev)
 {
-    if (bdev == NULL || !bdev->registered) {
+    if (bdev == NULL || !bdev->registered ||
+        bdev->request_queue.ops == NULL ||
+        bdev->request_queue.ops->dispatch_requests == NULL) {
         return -EINVAL;
     }
-    return xos_block_io_dispatch(&bdev->io_queue);
+    return bdev->request_queue.ops->dispatch_requests(&bdev->request_queue);
 }
 
 /*
+    baidu translation:
     xos_blockdev_add_disk — equivalent to Linux add_disk().
 
     Registers the block device, then automatically triggers partition
-    scanning (GPT first, MBR fallback).  Drivers should call this instead
-    of calling xos_blockdev_register() + xos_partition_scan() separately.
-
-    Returns the number of partitions found (>= 0) or a negative error code.
-    If registration succeeds but partition scan fails, the device is still
-    registered (partition scan is best-effort).
+    scanning GPT first, MBR fallback.  
 */
-int xos_blockdev_add_disk(xos_blkdev_t *bdev)
+int xos_blockdev_add_disk(xos_disk_dev_t *disk)
 {
+    xos_block_device_t *bdev;
     int ret;
     int part_count = 0;
 
-    if (bdev == NULL) {
+    if (disk == NULL) {
         return -EINVAL;
     }
+    bdev = xos_disk_to_block(disk);
+    bdev->disk = disk;
+    bdev->parent = bdev;
+    disk->partition_count = 0;
+    list_init(&disk->partition_list);
 
     ret = xos_blockdev_register(bdev);
     if (ret < 0) {
@@ -553,11 +692,9 @@ int xos_blockdev_add_disk(xos_blkdev_t *bdev)
     }
 
     /*
+        baidu translation:
         Automatically scan partitions.  xos_partition_scan() tries GPT
         first, falls back to MBR if no GPT header is found.
-
-        If partition scanning fails, the device itself is still usable
-        as a whole-disk device.  We log a warning but do not fail.
     */
     ret = xos_partition_scan(bdev);
     if (ret < 0) {
@@ -566,6 +703,7 @@ int xos_blockdev_add_disk(xos_blkdev_t *bdev)
                bdev->name, ret);
     } else {
         part_count = ret;
+        disk->partition_count = ret;
     }
 
     printk(PT_DEBUG,
@@ -577,21 +715,22 @@ int xos_blockdev_add_disk(xos_blkdev_t *bdev)
 
 /*
     xos_blockdev_del_disk — equivalent to Linux del_gendisk().
-
-    Removes all partitions belonging to this device, then unregisters
-    the device itself.  Safe to call even if partition scan was never
-    done or failed.
 */
-int xos_blockdev_del_disk(xos_blkdev_t *bdev)
+int xos_blockdev_del_disk(xos_disk_dev_t *disk)
 {
+    xos_block_device_t *bdev;
     int ret;
 
-    if (bdev == NULL) {
+    if (disk == NULL) {
         return -EINVAL;
     }
+    bdev = xos_disk_to_block(disk);
 
     /* Remove all partitions that reference this device as parent */
     xos_partition_remove(bdev);
+    if (disk->partition_count != 0) {
+        return -EBUSY;
+    }
 
     ret = xos_blockdev_unregister(bdev);
     if (ret < 0) {
@@ -605,27 +744,171 @@ int xos_blockdev_del_disk(xos_blkdev_t *bdev)
     return 0;
 }
 
+static int xos_blockdev_file_open(struct xos_inode *inode, struct file *filp)
+{
+    xos_block_device_t *bdev;
+    int ret;
 
-/*
-    Block device file operations.
-    XOS xfile_ops_t currently only supports: open, read, write, readdir, llseek.
-    Linux kernel block device fops (release/aio/mmap/fsync/ioctl/readv/writev/sendfile)
-    are not yet ported. Kept as reference for future expansion.
-*/
-#if 0
-struct xos_file_ops blk_fops = {
-	.open		= blkdev_open,
-	.release	= blkdev_close,
-	.llseek		= blkdev_llseek,
-	.read		= generic_file_read,
-	.write		= blkdev_file_write,
-  	.aio_read	= generic_file_aio_read,
-  	.aio_write	= blkdev_file_aio_write,
-	.mmap		= generic_file_mmap,
-	.fsync		= blkdev_fsync,
-	.ioctl		= blk_ioctl,
-	.readv		= generic_file_readv,
-	.writev		= __generic_file_write,
-	.sendfile	= generic_file_sendfile,
+    if (inode == NULL || filp == NULL) {
+        return -EINVAL;
+    }
+    bdev = xos_blockdev_get_by_devno(inode->devno);
+    if (bdev == NULL) {
+        return -ENODEV;
+    }
+    if ((filp->f_mode & FMODE_WRITE) &&
+        (bdev->flags & XOS_BLOCKDEV_READ_ONLY)) {
+        xos_blockdev_put(bdev);
+        return -EROFS;
+    }
+    ret = xos_blockdev_open(bdev);
+    if (ret < 0) {
+        xos_blockdev_put(bdev);
+        return ret;
+    }
+    filp->private_data = bdev;
+    return 0;
+}
+
+static int xos_blockdev_file_release(struct xos_inode *inode, struct file *filp)
+{
+    xos_block_device_t *bdev;
+    int ret;
+
+    (void)inode;
+    if (filp == NULL || filp->private_data == NULL) {
+        return -EINVAL;
+    }
+    bdev = filp->private_data;
+    filp->private_data = NULL;
+    ret = xos_blockdev_release(bdev);
+    xos_blockdev_put(bdev);
+    return ret;
+}
+
+static long xos_blockdev_file_read(struct file *filp, char *buf,
+                                   size_t count, long *pos)
+{
+    xos_block_device_t *bdev;
+    uint64 capacity;
+    uint32 length;
+    int ret;
+
+    if (filp == NULL || buf == NULL || pos == NULL ||
+        filp->private_data == NULL || *pos < 0) {
+        return -EINVAL;
+    }
+    if (count == 0) {
+        return 0;
+    }
+    bdev = filp->private_data;
+    capacity = xos_blockdev_capacity_bytes(bdev);
+    if ((uint64)*pos >= capacity) {
+        return 0;
+    }
+    length = count > 0xffffffffU ? 0xffffffffU : (uint32)count;
+    if ((uint64)length > capacity - (uint64)*pos) {
+        length = (uint32)(capacity - (uint64)*pos);
+    }
+    if ((uint64)length > ((~0UL) >> 1) - (uint64)*pos) {
+        length = (uint32)(((~0UL) >> 1) - (uint64)*pos);
+    }
+    if (length == 0) {
+        return 0;
+    }
+    ret = xos_blockdev_read(bdev, (uint64)*pos, buf, length);
+    if (ret < 0) {
+        return ret;
+    }
+    *pos += length;
+    return length;
+}
+
+static long xos_blockdev_file_write(struct file *filp, const char *buf,
+                                    size_t count, long *pos)
+{
+    xos_block_device_t *bdev;
+    uint64 capacity;
+    uint32 length;
+    int ret;
+
+    if (filp == NULL || buf == NULL || pos == NULL ||
+        filp->private_data == NULL || *pos < 0) {
+        return -EINVAL;
+    }
+    if (count == 0) {
+        return 0;
+    }
+    bdev = filp->private_data;
+    if (bdev->flags & XOS_BLOCKDEV_READ_ONLY) {
+        return -EROFS;
+    }
+    capacity = xos_blockdev_capacity_bytes(bdev);
+    if ((uint64)*pos >= capacity) {
+        return -ENOSPC;
+    }
+    length = count > 0xffffffffU ? 0xffffffffU : (uint32)count;
+    if ((uint64)length > capacity - (uint64)*pos) {
+        length = (uint32)(capacity - (uint64)*pos);
+    }
+    if ((uint64)length > ((~0UL) >> 1) - (uint64)*pos) {
+        length = (uint32)(((~0UL) >> 1) - (uint64)*pos);
+    }
+    if (length == 0) {
+        return -EOVERFLOW;
+    }
+    ret = xos_blockdev_write(bdev, (uint64)*pos, buf, length);
+    if (ret < 0) {
+        return ret;
+    }
+    *pos += length;
+    return length;
+}
+
+static loff_t xos_blockdev_file_llseek(struct file *filp,
+                                       loff_t offset, int whence)
+{
+    xos_block_device_t *bdev;
+    uint64 capacity;
+    loff_t base;
+    loff_t position;
+
+    if (filp == NULL || filp->private_data == NULL) {
+        return -ENODEV;
+    }
+    bdev = filp->private_data;
+    capacity = xos_blockdev_capacity_bytes(bdev);
+    if (capacity > ((~0UL) >> 1)) {
+        return -EOVERFLOW;
+    }
+    switch (whence) {
+    case SEEK_SET:
+        base = 0;
+        break;
+    case SEEK_CUR:
+        base = filp->f_pos;
+        break;
+    case SEEK_END:
+        base = (loff_t)capacity;
+        break;
+    default:
+        return -EINVAL;
+    }
+    if (offset < -base || offset > (loff_t)capacity - base) {
+        return -EINVAL;
+    }
+    position = base + offset;
+    filp->f_pos = (long)position;
+    return position;
+}
+
+xfile_ops_t xos_blockdev_file_ops = {
+    .open = xos_blockdev_file_open,
+    .release = xos_blockdev_file_release,
+    .read = xos_blockdev_file_read,
+    .write = xos_blockdev_file_write,
+    .llseek = xos_blockdev_file_llseek,
 };
-#endif
+
+
+
