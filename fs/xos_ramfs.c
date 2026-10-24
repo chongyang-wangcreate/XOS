@@ -31,6 +31,7 @@
 #include "xos_vfs.h"
 #include "fs.h"
 #include "xos_char_dev.h"
+#include "xos_block_dev.h"
 //#include "xos_ramfs.h"
 #include "tick_timer.h"
 #include "task.h"
@@ -285,6 +286,8 @@ void special_xnode_init(xinode *inode,int mode,devno_t dev)
             printk(PT_DEBUG,"%s:%d,devno=%d\n\r",__FUNCTION__,__LINE__,dev);
             break;
         case S_IFBLK:
+            inode->file_ops = &xos_blockdev_file_ops;
+            inode->devno = dev;
             break;
         case S_IFIFO:
             break;

@@ -198,6 +198,7 @@ typedef struct xos_superblock{
     void *private_data;
     struct xos_vfs_file_type *fs_type;
     struct xos_block_device *block_device;
+    int block_device_opened;
     xos_spinlock_t  lock;  /*防止多进程竞争冲突问题*/
     dlist_t inode_list; /*和inode 节点关联*/
     int mount_behavior;
@@ -222,6 +223,7 @@ typedef int (*filldir_t)(void *, const char *, int, long, uint64_t, unsigned int
 
 typedef struct xos_file_ops{
     int (*open) (struct xos_inode *, struct file *);
+    int (*release) (struct xos_inode *, struct file *);
     long (*read) (struct file *, char  *, size_t, long *);
     long (*write) (struct file *, const char  *, size_t, long *);
     int (*readdir) (struct file *, void *, filldir_t);

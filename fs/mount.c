@@ -174,6 +174,7 @@ static int xos_mount_get_super(xvfs_file_t *fs,
 {
     xos_block_device_t *bdev = NULL;
     xsuperblock *super = NULL;
+    int bdev_opened = 0;
     int ret;
 
     if (fs == NULL || out_super == NULL) {
@@ -189,6 +190,12 @@ static int xos_mount_get_super(xvfs_file_t *fs,
         if (bdev == NULL) {
             return -ENODEV;
         }
+        ret = xos_blockdev_open(bdev);
+        if (ret < 0) {
+            xos_blockdev_put(bdev);
+            return ret;
+        }
+        bdev_opened = 1;
         if (bdev->flags & XOS_BLOCKDEV_READ_ONLY) {
             flags |= SB_RDONLY;
         }
@@ -208,6 +215,9 @@ static int xos_mount_get_super(xvfs_file_t *fs,
             fs->release_file_system(super);
         }
         if (bdev != NULL) {
+            if (bdev_opened) {
+                xos_blockdev_release(bdev);
+            }
             xos_blockdev_put(bdev);
         }
         return ret < 0 ? ret : -EINVAL;
@@ -215,6 +225,7 @@ static int xos_mount_get_super(xvfs_file_t *fs,
 
     super->fs_type = fs;
     super->block_device = bdev;
+    super->block_device_opened = bdev_opened;
     super->s_dev = bdev == NULL ? 0 : bdev->devno;
     super->mount_behavior |= flags;
     super->root_dentry->xsb = super;
@@ -243,6 +254,10 @@ void xos_put_superblock(xsuperblock *super)
         fs->release_file_system(super);
     }
     if (bdev != NULL) {
+        if (super->block_device_opened) {
+            xos_blockdev_release(bdev);
+            super->block_device_opened = 0;
+        }
         xos_blockdev_put(bdev);
     }
 }
@@ -268,6 +283,10 @@ void xos_destory_superblock(xsuperblock *super)
         fs->release_file_system(super);
     }
     if (bdev != NULL) {
+        if (super->block_device_opened) {
+            xos_blockdev_release(bdev);
+            super->block_device_opened = 0;
+        }
         xos_blockdev_put(bdev);
     }
 }
