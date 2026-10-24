@@ -113,7 +113,6 @@ struct file *do_open_file(lookup_path_t *look, struct open_flags *op)
     xos_spinlock(&inode_lock);
     xos_spinlock_init(&new_file_ret->f_lock);
     new_file_ret->ref_count = 1;
-    new_file_ret->f_count = 1;
     new_file_ret->f_flags = op->open_flag;
     new_file_ret->f_mode = op->acc_mode;
     printk(PT_RUN,"WWWWWWWWWW %s:%d,op->acc_mode=%x\n\r",__FUNCTION__,__LINE__,op->acc_mode);
@@ -163,13 +162,16 @@ int  do_filp_open(lookup_path_t *path,struct open_flags *op)
     fd = alloc_unused_fd(current_task);
     printk(PT_RUN,"%s:%d,fd=%d\n\r",__FUNCTION__,__LINE__,fd);
     if(fd < 0){
+        xos_file_put(ret_file);
         return -1;
     }
     ret = file_fd_bind(ret_file,fd);
     if(!ret){
         return fd;
     }
-    return fd;
+    clear_bit(current_task->files_set.fd_map.bit_start, fd);
+    xos_file_put(ret_file);
+    return -1;
 }
 
 /*
@@ -442,11 +444,19 @@ int do_sys_dup(int old_fd)
 {
     int new_fd = -1;
     struct file  *file_node  = get_file_by_fd(old_fd);
-    new_fd = alloc_unused_fd(current_task);
     if(!file_node){
+        return -EBADF;
+    }
+    new_fd = alloc_unused_fd(current_task);
+    if (new_fd < 0) {
         return new_fd;
     }
-    file_fd_bind(file_node, new_fd);
+    xos_file_get(file_node);
+    if (file_fd_bind(file_node, new_fd) < 0) {
+        xos_file_put(file_node);
+        clear_bit(current_task->files_set.fd_map.bit_start, new_fd);
+        return -EBADF;
+    }
     return new_fd;
 }
 

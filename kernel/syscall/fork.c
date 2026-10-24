@@ -51,8 +51,10 @@
 #include "uart.h"
 #include "xos_page.h"
 #include "xos_vmm.h"
+#include "xos_file.h"
 #include "fork.h"
 #include "xos_pid.h"
+#include "../process.h"
 
 /*
     2026.0830 09：46 
@@ -76,30 +78,10 @@ static inline int fork_entry_is_table(uint64 entry)
             (PT_ENTRY_TABLE | PT_ENTRY_VALID));
 }
 
-static inline uint64 fork_vma_prot(struct vm_area_struct *vma, int cow)
-{
-    uint64 prot;
-
-    if (cow) {
-        prot = PG_RO_EL1_EL0 | PTE_COW;
-    } else if (vma->vm_flags & VM_WRITE) {
-        prot = PG_RW_EL1_EL0;
-    } else {
-        prot = PG_RO_EL1_EL0;
-    }
-
-    if ((vma->vm_flags & VM_EXEC) == 0) {
-        prot |= ATTR_UXN;
-    }
-
-    return prot | ATTR_PXN;
-}
-
 static int fork_copy_present_pages(struct task_struct *child,
                                    struct task_struct *parent,
                                    struct vm_area_struct *vma,
-                                   uint64 prot,
-                                   int update_parent)
+                                   int mark_parent)
 {
     uint64 va = ALIGN_DOWN(vma->vm_start, PAGE_SIZE);
     uint64 end = ALIGN_UP(vma->vm_end, PAGE_SIZE);
@@ -132,14 +114,32 @@ static int fork_copy_present_pages(struct task_struct *child,
             pte = &pte_base[PTE_IDX(va)];
             if (*pte & PT_ENTRY_VALID) {
                 uint64 phy_addr = *pte & PG_4k_ADDR_MASK;
+                int cow = (vma->vm_flags & VM_WRITE) &&
+                          !(vma->vm_flags & VM_SHARED);
 
-                if (update_parent) {
-                    xos_3level_one_pagemap(parent->task_pgd,
-                                           (void *)va, phy_addr, prot);
+                if (mark_parent) {
+                    if (cow) {
+                        *pte = (*pte & ~AP_MASK) | PG_RO_EL1_EL0 | PTE_COW;
+                    }
+                } else {
+                    uint64 prot = *pte & ~PG_4k_ADDR_MASK;
+                    int ret;
+
+                    if (cow) {
+                        prot = (prot & ~AP_MASK) | PG_RO_EL1_EL0 |
+                               PTE_COW;
+                    }
+                    ret = xos_page_get(phy_addr);
+                    if (ret < 0) {
+                        return ret;
+                    }
+                    ret = xos_3level_one_pagemap(child->task_pgd,
+                                                  (void *)va, phy_addr, prot);
+                    if (ret < 0) {
+                        xos_page_put(phy_addr);
+                        return ret;
+                    }
                 }
-                xos_3level_one_pagemap(child->task_pgd,
-                                       (void *)va, phy_addr, prot);
-                xos_page_get(phy_addr);
             }
             va += PAGE_SIZE;
         }
@@ -242,76 +242,38 @@ int copy_vma_dec(struct task_struct *child,struct task_struct * parent)
     return 0;
 }
 
-/*
-    parent and child process use a physical address
-
-    no copy behaivor  no need for lock
-*/
 int copy_vma_page(struct task_struct *child,struct task_struct * parent)
 {
     int ret;
-    struct vm_area_struct *next_vma;
-    struct vm_area_struct *child_vma;
     struct vm_area_struct *vma;
-    uint64 prot;
     int parent_pte_changed = 0;
-//    pte_t *parent_pte;
-//    pte_t *child_pte;
-    vma = parent->mm->mmap;
-    for(;vma != NULL;vma = vma->vm_next){
-        if (vma->vm_flags & VM_SHARED){
-            /*
-                no need chang prot ,pte some map
-                虚拟地址相同，物理地址相同，pgd  ,pmd 页表位置不同，pte 页表相同
-                所以最后一级页表需要根据情况单独做映射
-                如果中间某次vma 申请失败如何处理，以前的申请的vma 全部遍历释放
-                共享映射，不修改VMA权限
-            */
-            ret = create_vma(child, vma->vm_start, vma->vm_end, vma->pma_saddr,vma->vm_flags);
-            if(ret < 0){
-                goto fail_create_vma;
-            }
-            prot = fork_vma_prot(vma, 0);
-            ret = fork_copy_present_pages(child, parent, vma, prot, 0);
-            if(ret < 0){
-                goto fail_find_pte;
-            }
-
-            
-        }else{
-            /*
-                child parent need chang prot readonly
-                pte some map
-            */
-            prot = fork_vma_prot(vma, 1);
-            ret = create_vma(child, vma->vm_start, vma->vm_end, vma->pma_saddr,vma->vm_flags);
-            if(ret < 0){
-                goto fail_create_vma;
-            }
-            ret = fork_copy_present_pages(child, parent, vma, prot, 1);
-            if(ret < 0){
-                goto fail_find_pte;
-            }
+    for (vma = parent->mm->mmap; vma != NULL; vma = vma->vm_next) {
+        ret = create_vma(child, vma->vm_start, vma->vm_end,
+                         vma->pma_saddr, vma->vm_flags);
+        if (ret < 0) {
+            return ret;
+        }
+        ret = fork_copy_present_pages(child, parent, vma, 0);
+        if (ret < 0) {
+            return ret;
+        }
+        if ((vma->vm_flags & VM_WRITE) &&
+            !(vma->vm_flags & VM_SHARED)) {
             parent_pte_changed = 1;
         }
     }
 
+    /* Only change parent permissions after every child mapping succeeds. */
     if (parent_pte_changed) {
+        for (vma = parent->mm->mmap; vma != NULL; vma = vma->vm_next) {
+            if ((vma->vm_flags & VM_WRITE) &&
+                !(vma->vm_flags & VM_SHARED)) {
+                fork_copy_present_pages(child, parent, vma, 1);
+            }
+        }
         fork_flush_tlb();
     }
     return 0;
-
-fail_find_pte:
-
-    child_vma = child->mm->mmap;
-    for(;child_vma != NULL;child_vma = next_vma){
-        next_vma = child_vma->vm_next;
-        xos_kfree(child_vma);
-    }
-    child->mm->mmap = NULL;
-
-fail_create_vma:
-    return ret;
 }
 
 int copy_vma(struct task_struct *child,struct task_struct *parent)
@@ -355,10 +317,8 @@ int  copy_mm(struct task_struct *child,  struct task_struct *parent)
     return 0;
 
 fail_copy_vma:
-    child->resource_flags &= ~TASK_RESOURCE_PGD;
-    xos_free_page(child->task_pgd);
-    child->task_pgd = NULL;
-
+    process_release_address_space(child);
+    return ret;
 fail_alloc_pgd:
     child->resource_flags &= ~TASK_RESOURCE_MM;
     xos_kfree(child->mm);
@@ -384,10 +344,7 @@ void copy_files(struct task_struct *child,  struct task_struct *parent)
         if(filp == NULL){
             continue;
         }
-        xos_spinlock(&filp->f_lock);
-        filp->ref_count++;
-        filp->f_count++;
-        xos_unspinlock(&filp->f_lock);
+        xos_file_get(filp);
     }
     
 }
@@ -505,20 +462,7 @@ fail_copy_process:
         free_pid(child->pid);
         child->pid = 0;
     }
-    if((child->resource_flags & TASK_RESOURCE_PGD) && child->task_pgd){
-        pgd_t *task_pgd = child->task_pgd;
-
-        child->task_pgd = NULL;
-        child->resource_flags &= ~TASK_RESOURCE_PGD;
-        xos_free_page(task_pgd);
-    }
-    if((child->resource_flags & TASK_RESOURCE_MM) && child->mm){
-        struct mm_struct *mm = child->mm;
-
-        child->mm = NULL;
-        child->resource_flags &= ~TASK_RESOURCE_MM;
-        xos_kfree(mm);
-    }
+    process_release_address_space(child);
     if(child->resource_flags & TASK_RESOURCE_KSTACK){
         child->kstack = NULL;
         child->resource_flags &= ~TASK_RESOURCE_KSTACK;

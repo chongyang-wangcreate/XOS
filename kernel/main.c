@@ -84,7 +84,7 @@
 extern void * exce_vectors;
 extern void * k_bss_start;
 extern void * k_bss_end;
-
+extern void init_ext4fs(void);
 
 #define wfi()       asm volatile("wfi" : : : "memory")
 
@@ -151,15 +151,18 @@ void start_init(char *array)
 #ifndef CONFIG_DEV
      xos_init_deivices(); 
 #endif
+
+    init_ext4fs();
     xos_boot_secondary_cpus();
-    #ifdef CONFIG_SMP_TEST
+#ifdef CONFIG_SMP_TEST
     xos_smp_selftest();
+#endif
 #ifdef CONFIG_PROCESS_TEST
 
     xos_process_selftest();
 #endif
 
-    #endif
+
    // process_create();
     while(1){
         child_pid = process_create();

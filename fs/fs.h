@@ -323,8 +323,7 @@ typedef struct file {
     xos_spinlock_t  f_lock;
     struct xos_dentry  *f_dentry;	/* cached value */
     struct xos_file_ops  *f_ops;
-    unsigned long  ref_count;
-    long f_count;
+    unsigned long  ref_count;/* 文件引用计数 references count*/
     unsigned int f_flags;
     int f_mode;
     long f_pos;

@@ -18,6 +18,8 @@ extern struct file *get_free_file(int fd);
 
 extern int file_fd_bind(struct file* new_file,int fd);
 extern struct file * get_file_by_fd(int fd);
+void xos_file_get(struct file *filp);
+void xos_file_put(struct file *filp);
 
 extern loff_t generic_ram_file_llseek(struct file *, loff_t , int);
 

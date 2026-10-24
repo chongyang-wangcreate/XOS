@@ -36,7 +36,8 @@ ssize_t do_sys_write(int fd,void *buf,ssize_t count){
     struct file *new_file;
     new_file = get_file_by_fd(fd);
     
-    if (new_file->f_flags & O_APPEND)
+    if ((new_file->f_flags & O_APPEND) &&
+        !S_ISBLK(new_file->f_dentry->file_node->node_mode))
         new_file->f_pos = new_file->f_dentry->file_node->file_size;
     if(new_file->f_mode & FMODE_WRITE){
         if(new_file->f_ops->write){

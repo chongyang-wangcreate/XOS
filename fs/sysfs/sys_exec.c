@@ -166,7 +166,7 @@ static int exec_close(int fd)
     xos_unspinlock(&task->files_set.file_lock);
 
     if (filp != NULL) {
-        xos_kfree(filp);
+        xos_file_put(filp);
     }
     return 0;
 }

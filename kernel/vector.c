@@ -167,6 +167,9 @@ static int user_vma_map_page_fault(struct task_struct *tsk,
     ret = map_page(tsk->task_pgd, (void *)page_vaddr, PAGE_SIZE,
                    phy_addr, user_vma_page_prot(vma));
     if(ret < 0){
+        if (vma->pma_saddr == (uint64_t)-1) {
+            xos_page_put(phy_addr);
+        }
         printk(PT_ERROR, "%s: map_page failed va=%lx phyaddr=%lx ret=%d\n\r",
                __FUNCTION__, page_vaddr, phy_addr, ret);
         return ret;
@@ -232,11 +235,10 @@ int page_fault(struct task_struct *tsk, uint64_t vaddr, uint64_t esr)
             }
             memcpy(new_kva, (void *)page_align_vaddr, PAGE_SIZE);
             xos_kunmap_page(new_kva);
-            *pte = new_phy_addr | ACCESS_FLAG | SH_IN_SH | PG_RW_EL1_EL0 |
-                   NON_SECURE_PA | PT_ATTRINDX(MT_NORMAL) | PT_ENTRY_PAGE |
-                   PT_ENTRY_VALID;
-            xos_page_put(old_phy_addr);
+            *pte = (*pte & ~(PG_4k_ADDR_MASK | AP_MASK | PTE_COW)) |
+                   (new_phy_addr & PG_4k_ADDR_MASK) | PG_RW_EL1_EL0;
             flush_user_tlb();
+            xos_page_put(old_phy_addr);
             return 0;
         }
 

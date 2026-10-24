@@ -24,6 +24,42 @@
 #include "xos_file.h"
 #include "task.h"
 
+void xos_file_get(struct file *filp)
+{
+    if (filp == NULL) {
+        return;
+    }
+
+    xos_spinlock(&filp->f_lock);
+    filp->ref_count++;
+    xos_unspinlock(&filp->f_lock);
+}
+
+void xos_file_put(struct file *filp)
+{
+    int comp_ret;
+
+    if (filp == NULL) {
+        return;
+    }
+    xos_spinlock(&filp->f_lock);
+    if (filp->ref_count == 0) {
+        xos_unspinlock(&filp->f_lock);
+        return;
+    }
+    filp->ref_count--;
+    comp_ret = filp->ref_count == 0;
+    xos_unspinlock(&filp->f_lock);
+    if (!comp_ret) {
+        return;
+    }
+
+    if (filp->f_ops != NULL && filp->f_ops->release != NULL) {
+        filp->f_ops->release(filp->f_dentry->file_node, filp);
+    }
+    xos_kfree(filp);
+}
+
 
 /*
     need to bind with the current process

@@ -34,6 +34,7 @@
 #include "xos_vfs.h"
 #include "fs.h"
 #include "xos_devfs.h"
+#include "xos_ramdisk.h"
 #include "syscall.h"
 #include "xdentry.h"
 //#include "xos_fs_types.h"
@@ -72,7 +73,6 @@ void  init_file_sys()
     init_ramfs();  /*初始化根文件系统到系统*/
     init_tmpfs();
     init_devfs();
-    init_ext4fs();
 }
 
 int xos_vfs_init()
@@ -117,6 +117,7 @@ void xos_mount_fs()
         open 设备节点的时候，通过名字找到对应的设备号
     */
     sys_mknod("/dev/wcy",S_IFCHR,10);
+    sys_mknod("/dev/ram0", S_IFBLK, XOS_RAMDISK_DEV_MAJOR);
 
 }
 

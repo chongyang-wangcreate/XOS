@@ -34,7 +34,7 @@
 .equ TCR_T1SZ,              ((64 - 39) << 16)   /* 25 << 16 = 0x01900000 */
 .equ TCR_TG0_4KB,           (0 << 14)           /* 0 */
 .equ TCR_TG1_4KB,           (2 << 30)           /* 0x80000000 */
-.equ TCR_IPS,               (0 << 32)           /* 40位物理地址 */
+.equ TCR_IPS,               (2 << 32)           /* 40位物理地址 */
 .equ TCR_VALUE,             (TCR_T0SZ | TCR_T1SZ | TCR_TG0_4KB | TCR_TG1_4KB | TCR_IPS)
 
 /* MAIR set */

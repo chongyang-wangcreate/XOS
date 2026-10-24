@@ -220,7 +220,8 @@ NC是no cache，也就是说MT_NORMAL_NC的memory是normal memory，但是对于
 
 
 #define PTE_COW (1UL << 55)
-#define PG_4k_ADDR_MASK	0xFFFFFFFFF000UL	// bit 47 - bit 12
+//#define PG_4k_ADDR_MASK	0xFFFFFFFFF000UL	// bit 47 - bit 12
+#define PG_4k_ADDR_MASK 0xFFFFFFF000UL      // bit 39 - bit 12
 
 
 /*

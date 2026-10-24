@@ -18,6 +18,7 @@
 #include "xos_pid.h"
 #include "xos_sleep.h"
 #include "process.h"
+#include "xos_file.h"
 
 #define XOS_PAGE_TABLE_ENTRIES 512
 
@@ -37,15 +38,8 @@ static void process_release_files(struct task_struct *task)
         if(filp == NULL){
             continue;
         }
-        xos_spinlock(&filp->f_lock);
-        if(filp->ref_count > 0){
-            filp->ref_count--;
-        }
-        if(filp->f_count > 0){
-            filp->f_count--;
-        }
-        xos_unspinlock(&filp->f_lock);
         task->files_set.file_set[fd] = NULL;
+        xos_file_put(filp);
     }
     memset(task->files_set.fd_set, 0, sizeof(task->files_set.fd_set));
 }
