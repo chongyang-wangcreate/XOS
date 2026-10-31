@@ -329,21 +329,22 @@ extern char __bss_end[];
 #define KERNEL_RODATA_PROT    (PG_RO_EL1 | ATTR_UXN | ATTR_PXN)
 #define KERNEL_DATA_PROT      (PG_RW_EL1 | ATTR_UXN | ATTR_PXN)
 
-static void xos_kernel_section_map(pgd_t *pgdir, char *start, char *end, uint64 prot)
+static int xos_kernel_section_map(pgd_t *pgdir, char *start, char *end, uint64 prot)
 {
     uint64 vstart = ALIGN_DOWN((uint64)start, PAGE_SIZE);
     uint64 vend = ALIGN_UP((uint64)end, PAGE_SIZE);
 
     if (vend <= vstart) {
-        return;
+        return 0;
     }
 
-    boot_mem_3level_maps(pgdir, (void *)vstart, vend - vstart,
-                         KERNEL_IMAGE_V2P(vstart), prot);
+    return boot_mem_3level_maps(pgdir, (void *)vstart, vend - vstart,
+                                KERNEL_IMAGE_V2P(vstart), prot);
 }
 
-void xos_kernel_map(void)
+int xos_kernel_map(void)
 {
+    int ret;
     pgd_t *image_pgdir = (pgd_t *)boot_alloc_virt(PAGE_SIZE);
     pgd_t *linear_pgdir = (pgd_t *)boot_alloc_virt(PAGE_SIZE);
     pmd_t *linear_pmd = (pmd_t *)boot_alloc_virt(PAGE_SIZE);
@@ -351,38 +352,44 @@ void xos_kernel_map(void)
     printk(PT_DEBUG, "linear_pgdir_addr=%lx\n",(unsigned long)linear_pgdir);
     printk(PT_DEBUG, "linear_pmd_addr=%lx\n",(unsigned long)linear_pmd);
     unsigned long image_index = PGD_IDX((uint64)__text);
-    unsigned long linear_index = PGD_IDX(LINEAR_P2V_UL(PHYS_MEM_START));
+
     void (*replace_mapping)(uint64 *, uint64) =
         (void (*)(uint64 *, uint64))KERNEL_IMAGE_V2P(replace_boot_mapping);
-
     memset(image_pgdir, 0, PAGE_SIZE);
     memset(linear_pgdir, 0, PAGE_SIZE);
-    memcpy(linear_pmd, P2V(l1_kernel_pgt[linear_index] & PG_4k_ADDR_MASK), PAGE_SIZE);
-    linear_pgdir[linear_index] = V2P(linear_pmd) | PT_ENTRY_TABLE | PT_ENTRY_VALID;
+    ret = xos_kernel_section_map(image_pgdir, __text, _etext,KERNEL_TEXT_PROT);
+    if (ret < 0){
+        return ret;
+    } 
+    ret = xos_kernel_section_map(image_pgdir, _srodata, _erodata,KERNEL_RODATA_PROT);
+    if (ret < 0){
+       return ret;
+    }
 
-    xos_kernel_section_map(image_pgdir, __text, _etext, KERNEL_TEXT_PROT);
-    xos_kernel_section_map(image_pgdir, _srodata, _erodata, KERNEL_RODATA_PROT);
     /*
      * Keep the linker guard pages between .data, .bss and the reserved
      * kernel area unmapped. Mapping one continuous range to kernel_end would
      * turn those guard pages into ordinary writable pages.
-     */
-    xos_kernel_section_map(image_pgdir, _sdata, _edata, KERNEL_DATA_PROT);
-    xos_kernel_section_map(image_pgdir, __bss_start, __bss_end, KERNEL_DATA_PROT);
-    xos_kernel_section_map(image_pgdir, __init_begin, __init_end, KERNEL_DATA_PROT);
+    */
+    ret = xos_kernel_section_map(image_pgdir, _sdata, _edata,KERNEL_DATA_PROT);
+    if (ret < 0){
+        return ret;
+    } 
+    ret = xos_kernel_section_map(image_pgdir, __bss_start, __bss_end,KERNEL_DATA_PROT);
+    if (ret < 0){
+        return ret;
+    } 
+    ret = xos_kernel_section_map(image_pgdir, __init_begin, __init_end,KERNEL_DATA_PROT);
+    if (ret < 0) {
+        return ret;
+    }
     printk(PT_DEBUG, "kernel map finish FFFFFFFFFFF\n");
-    boot_mem_3level_maps(linear_pgdir, P2V(KERNEL_IMAGE_V2P(__text)),
-                         ALIGN_UP((uint64)_etext, PAGE_SIZE) - (uint64)__text,
-                         KERNEL_IMAGE_V2P(__text), KERNEL_RODATA_PROT);
-    boot_mem_3level_maps(linear_pgdir, P2V(KERNEL_IMAGE_V2P(_srodata)),
-                         (uint64)_erodata - (uint64)_srodata,
-                         KERNEL_IMAGE_V2P(_srodata), KERNEL_RODATA_PROT);
     replace_mapping((uint64 *)(KERNEL_IMAGE_V2P(l1_kernel_pgt) + image_index * sizeof(pgd_t)),
                     image_pgdir[image_index]);
-    replace_mapping((uint64 *)(KERNEL_IMAGE_V2P(l1_kernel_pgt) + linear_index * sizeof(pgd_t)),
-                    linear_pgdir[linear_index]);
+
     flush_tlb();
     printk(PT_ERROR, "Kernel section map finish\n");
+    return 0;
 }  
 
 void all_phys_linear_map(void)
