@@ -34,13 +34,25 @@ ssize_t do_sys_write(int fd,void *buf,ssize_t count){
 
     int ret = -1;
     struct file *new_file;
+    if (fd < 0) {
+        return -EBADF;
+    }
+   
+    if (count < 0 || (count != 0 && buf == NULL)){
+        return -EINVAL;
+    }
     new_file = get_file_by_fd(fd);
-    
+    if (!new_file){
+        return -EBADF;
+    } 
+    /*追加*/
     if ((new_file->f_flags & O_APPEND) &&
-        !S_ISBLK(new_file->f_dentry->file_node->node_mode))
+        !S_ISBLK(new_file->f_dentry->file_node->node_mode)){
         new_file->f_pos = new_file->f_dentry->file_node->file_size;
+    }
+        
     if(new_file->f_mode & FMODE_WRITE){
-        if(new_file->f_ops->write){
+        if(new_file->f_ops && new_file->f_ops->write){
             ret =new_file->f_ops->write(new_file,buf,count,&new_file->f_pos);
         }
     }

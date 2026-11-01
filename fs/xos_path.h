@@ -27,6 +27,8 @@ typedef struct fs_path_lookup{
     int path_type; /*路径分量类型*/
     int flags;  /*标识路径*/
     int mode;
+    unsigned int symlink_depth;
+    unsigned char last_name_buf[128];
 }lookup_path_t;
 
 

@@ -25,13 +25,13 @@ enum {LAST_NORM, LAST_ROOT, LAST_DOT, LAST_DOTDOT, LAST_BIND};
 #define LOOKUP_NO_LAST_DIR	1 << 1
 #define LOOKUP_LAST_DIR		1 << 2
 
-#define LOOKUP_FOLLOW		0x0001  //我定义LOOUP_FOLLOW 文件必须存在非创建
+#define LOOKUP_FOLLOW		0x0001  // 是否跟随最后一个符号链接；查找不会创建不存在的路径
 #define LOOKUP_DIRECTORY	0x0002
 #define LOOKUP_AUTOMOUNT	0x0004
 #define LOOKUP_CREAT    0x0008
 
 
-#define LOOKUP_PARENT		0x0010
+#define LOOKUP_PARENT		0x0010  // 只解析父目录，将最后一个分量存入 last_path
 #define LOOKUP_REVAL		0x0020
 #define LOOKUP_RCU		0x0040
 #define LOOKUP_NO_REVAL		0x0080

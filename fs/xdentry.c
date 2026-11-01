@@ -65,13 +65,13 @@ void  init_dentry_cache(void)
 {
     int i;
     dentry_pool.dentry_cache_man = xos_kmalloc(sizeof(cache_pool_man_t)*MAX_DENTRY);
+    memset(dentry_pool.dentry_cache_man, 0, sizeof(cache_pool_man_t)*MAX_DENTRY);
     dentry_pool.dentry_pool_max_cnt = MAX_DENTRY;
     dentry_pool.dentry_pool_free_cnt = MAX_DENTRY;
     dentry_pool.dentry_pool_using_cnt = 0;
     for(i = 0;i < MAX_DENTRY; i++)
     {
         xos_spinlock_init(&(dentry_pool.dentry_cache_man[i].dentry_cache.lock));
-        memset(&dentry_pool.dentry_cache_man[i],0,sizeof(cache_pool_man_t));
 
     }
     list_init(&dentry_pool.dentry_free_list);
@@ -84,76 +84,38 @@ void  init_dentry_cache(void)
 xdentry *alloc_cache_xdentry()
 {
     int i;
-    xdentry  *cache_xdentry = NULL;
+    xdentry *entry;
     cache_pool_man_t *cache_man;
-    dlist_t *head_node = NULL;
-    xos_spinlock(&dentry_lock);
-    if(get_cache_xdentry_free_cnt() > 0){
-        for(i = 0; i < MAX_DENTRY; i++){
-        if(dentry_pool.dentry_cache_man[i].alloc_flags == 0){
-                dentry_pool.dentry_cache_man[i].in_cache_pool = 1;
-                dentry_pool.dentry_cache_man[i].alloc_flags = 1;
-                dentry_pool.dentry_pool_free_cnt--;
-                dentry_pool.dentry_pool_using_cnt++;
-                xos_unspinlock(&dentry_lock);
-                printk(PT_DEBUG,"%s:%d,MAGIC:lock alloc_index =%d\n\r",__FUNCTION__,__LINE__,i);
-                return &dentry_pool.dentry_cache_man[i].dentry_cache;
-            }
-        }
-    }
-    xos_spinlock(&dentry_lock);
-    if(list_is_empty(&dentry_pool.dentry_free_list)){
-        cache_man = xos_kmalloc(sizeof(cache_pool_man_t));
-        if(!cache_man){
-            return NULL;
-        }
-        cache_man->in_cache_pool = 0;
-        list_add_back(&cache_xdentry->dcache_list, &dentry_pool.dentry_using_list);
-    }else{
-        head_node = &dentry_pool.dentry_free_list;
 
-        cache_xdentry = list_entry(head_node->next,xdentry,dcache_list);
-
+    xos_spinlock(&dentry_lock);
+    for (i = 0; i < MAX_DENTRY; ++i) {
+        cache_man = &dentry_pool.dentry_cache_man[i];
+        if (!cache_man->alloc_flags) {
+            cache_man->alloc_flags = 1;
+            cache_man->in_cache_pool = 1;
+            dentry_pool.dentry_pool_free_cnt--;
+            dentry_pool.dentry_pool_using_cnt++;
+            entry = &cache_man->dentry_cache;
+            xos_unspinlock(&dentry_lock);
+            return entry;
+        }
     }
     xos_unspinlock(&dentry_lock);
-    return cache_xdentry;
+    /* 动态项不挂全局链表，释放时直接交还分配器。 */
+    cache_man = xos_kmalloc(sizeof(*cache_man));
+    if (cache_man == NULL) {
+        return NULL;
+    }
+    cache_man->in_cache_pool = 0;
+    cache_man->alloc_flags = 1;
+    return &cache_man->dentry_cache;
 }
 
 
 xdentry *alloc_cache_xdentry_unlock()
 {
-    int i;
-    xdentry  *cache_xdentry = NULL;
-    cache_pool_man_t *cache_man;
-    dlist_t *head_node = NULL;
-    
-    if(get_cache_xdentry_free_cnt() > 0){
-        for(i = 0; i < MAX_DENTRY; i++){
-        if(dentry_pool.dentry_cache_man[i].alloc_flags == 0){
-                dentry_pool.dentry_cache_man[i].in_cache_pool = 1;
-                dentry_pool.dentry_cache_man[i].alloc_flags = 1;
-                dentry_pool.dentry_pool_free_cnt--;
-                dentry_pool.dentry_pool_using_cnt++;
-                
-                printk(PT_RUN,"%s:%d,MAGIC:UNLOCK alloc_index =%d\n\r",__FUNCTION__,__LINE__,i);
-                return &dentry_pool.dentry_cache_man[i].dentry_cache;
-            }
-        }
-    }
-    if(list_is_empty(&dentry_pool.dentry_free_list)){
-        cache_man = xos_kmalloc(sizeof(cache_pool_man_t));
-        if(!cache_man){
-            return NULL;
-        }
-        cache_man->in_cache_pool = 0;
-        list_add_back(&cache_xdentry->dcache_list, &dentry_pool.dentry_using_list);
-    }else{
-        head_node = &dentry_pool.dentry_free_list;
-
-        cache_xdentry = list_entry(head_node->next,xdentry,dcache_list);
-
-    }
-    return cache_xdentry;
+    /* 兼容旧调用者；分配器统一负责缓存池锁。 */
+    return alloc_cache_xdentry();
 }
 
 
@@ -162,16 +124,15 @@ void  free_dentry_cache(xdentry *dentry_node)
 {
     cache_pool_man_t *cache_man = (cache_pool_man_t *)dentry_node;
     xos_spinlock(&dentry_lock);
-    printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
     if(cache_man->in_cache_pool == 1){
         
         cache_man->alloc_flags = 0;
         dentry_pool.dentry_pool_free_cnt++;
         dentry_pool.dentry_pool_using_cnt--;
     }else{
-        
-        list_del(&dentry_node->dcache_list);
-        list_add_back(&dentry_node->dcache_list, &dentry_pool.dentry_free_list);
+        xos_unspinlock(&dentry_lock);
+        xos_kfree(cache_man);
+        return;
     }
 
     xos_unspinlock(&dentry_lock);
@@ -279,11 +240,12 @@ xdentry *xdentry_cache_alloc_init(xdentry *parent,const path_name_t *name)
         name->len >= XOS_DENTRY_NAME_MAX) {
         return NULL;
     }
-    dentry_cache = alloc_cache_xdentry_unlock();
+    dentry_cache = alloc_cache_xdentry();
     if (dentry_cache == NULL) {
         return NULL;
     }
     memset(dentry_cache,0,sizeof(xdentry));   
+    xos_spinlock_init(&dentry_cache->lock);
     /*
         very important
         20261016, path_name 函数指针指向的是局部指针字符串，所以可能存在问题
@@ -307,16 +269,71 @@ xdentry *xdentry_cache_alloc_init(xdentry *parent,const path_name_t *name)
         dentry_cache->parent_dentry = parent;
         
         printk(PT_RUN,"%s:%d,parent.name=%s\n\r",__FUNCTION__,__LINE__,parent->file_name.path_name);
+        xos_spinlock(&dentry_lock);
         parent->ref_count++;
-        xos_spinlock(&dentry_cache->lock);
         list_add_back(&dentry_cache->ch_at_parent_list, &parent->children_list_head);
-        xos_unspinlock(&dentry_cache->lock);
+        xos_unspinlock(&dentry_lock);
     } else{
         dentry_cache->parent_dentry = dentry_cache;
         
         printk(PT_RUN,"%s:%d,dentry_cache.name=%s\n\r",__FUNCTION__,__LINE__,dentry_cache->file_name.path_name);
     }
 	return dentry_cache;
+}
+
+/*
+  存在dentry 直接使用，否则创建
+  原子查找/插入：候选项在锁外分配，防止并发创建同名子项。
+ */
+xdentry *xdentry_get_or_create(xdentry *parent, const path_name_t *name)
+{
+    xdentry *candidate;
+    xdentry *child;
+    dlist_t *item;
+    dlist_t *head;
+    path_name_t lookup_name;
+
+    if (parent == NULL || name == NULL || name->path_name == NULL ||
+        name->len == 0 || name->len >= XOS_DENTRY_NAME_MAX) {
+        return NULL;
+    }
+    /* 先查找已存在的目录项，避免命中时仍分配候选项。 */
+    lookup_name = *name;
+    child = find_in_pdentry(parent, &lookup_name);
+    if (child != NULL) {
+        return child;
+    }
+
+    candidate = alloc_cache_xdentry();
+    if (candidate == NULL) {
+        return NULL;
+    }
+    memset(candidate, 0, sizeof(*candidate));
+    xos_spinlock_init(&candidate->lock);
+    memcpy(candidate->name_buf, name->path_name, name->len);
+    candidate->name_buf[name->len] = '\0';
+    candidate->file_name.path_name = candidate->name_buf;
+    candidate->file_name.len = name->len;
+    candidate->parent_dentry = parent;
+    list_init(&candidate->children_list_head);
+    list_init(&candidate->ch_at_parent_list);
+    dget(candidate);
+
+    xos_spinlock(&dentry_lock);
+    head = &parent->children_list_head;
+    /* 分配期间其他 CPU 可能已插入同名目录项，必须再次检查。 */
+    list_for_each(item, head) {
+        child = list_entry(item, xdentry, ch_at_parent_list);
+        if (dentry_name_match(child, &lookup_name)) {
+            xos_unspinlock(&dentry_lock);
+            free_dentry_cache(candidate);
+            return child;
+        }
+    }
+    parent->ref_count++;
+    list_add_back(&candidate->ch_at_parent_list, &parent->children_list_head);
+    xos_unspinlock(&dentry_lock);
+    return candidate;
 }
 
 

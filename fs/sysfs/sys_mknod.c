@@ -84,13 +84,12 @@ int check_mknod(xdentry *son_node_dentry,xinode *parent_node,int mode,devno_t de
         
         ret = -EEXIST;
     }
-    else if (!parent_node->inode_ops || !parent_node->inode_ops->mknod){
-        
+    else if (!parent_node->inode_ops || !parent_node->inode_ops->mknod){        
         ret = -EPERM;
     }
     else  
     {   
-        printk(PT_RUN,"%s:%d,!!!son_file_dentry=%s,len=%d\n\r",__FUNCTION__,__LINE__,son_node_dentry->file_name.path_name,son_node_dentry->file_name.len);
+        printk(PT_ERROR,"%s:%d,!!!son_file_dentry=%s,len=%d\n\r",__FUNCTION__,__LINE__,son_node_dentry->file_name.path_name,son_node_dentry->file_name.len);
         ret = parent_node->inode_ops->mknod(parent_node, son_node_dentry, mode,dev);
     }
 
@@ -100,51 +99,57 @@ int check_mknod(xdentry *son_node_dentry,xinode *parent_node,int mode,devno_t de
 int do_mknod(int dir_fd, const char  *pathname, int mode,devno_t dev)
 {
     int ret;
-    lookup_path_t look_path;
+    lookup_path_t look_path = {0};
     xinode *parent_node;
     xdentry *son_file_dentry;
-    int flags = LOOKUP_PARENT;
-    ret =  resolve_path((char*)pathname, flags,&look_path);
-    
-    printk(PT_RUN,"%s:%d,look_path->look_dentry.path_name=%s ,look_path->look_path.last_path=%s\n\r",__FUNCTION__,__LINE__,look_path.look_dentry->file_name.path_name,look_path.last_path.path_name);
-    
-    if (ret || (look_path.path_type != PATH_NORMAL)){
-        
-        goto resolve_path_fail;
+    ret = resolve_path((char*)pathname, LOOKUP_PARENT, &look_path);
+    if (ret < 0) {
+        return ret;
     }
+    /* 用path_type 描述末尾路径分量的语法，不表示目标是否存在。
+     * 根目录、. 和 .. 都是目录，不能作为新设备节点的名称。 */
+    if (look_path.path_type == PATH_ROOT || look_path.path_type == PATH_DOT ||
+        look_path.path_type == PATH_DOTDOT) {
+        return -EISDIR;
+    }
+    if (look_path.path_type != PATH_NORMAL) {
+        return -EINVAL;
+    }
+    if (pathname[strlen(pathname) - 1] == '/') {
+        return -EISDIR;
+    }
+    parent_node = look_path.look_dentry->file_node;
+    if (!parent_node) {
+        return -ENOENT;
+    }
+    if (!S_ISDIR(parent_node->node_mode)) {
+        return -ENOTDIR;
+    }
+    if (IS_RDONLY(parent_node)) {
+        return -EROFS;
+    }
+    if (!parent_node->inode_ops || !parent_node->inode_ops->mknod) {
+        return -EPERM;
+    }
+    printk(PT_RUN,"%s:%d,look_path->look_dentry.path_name=%s ,look_path->look_path.last_path=%s\n\r",__FUNCTION__,__LINE__,look_path.look_dentry->file_name.path_name,look_path.last_path.path_name);
     
     /*
         find file in parent dir
+        普通文件是否已存在，由查找到的目录项是否关联 inode 判断。
     */
-    look_path.flags &= ~LOOKUP_PARENT;
-    son_file_dentry = lookup_dentry_in_pdentry(&look_path.last_path, look_path.look_dentry, NULL);
-    if(!son_file_dentry){
-        ret = -ENOMEM;
-        goto lookup_dentry_faile;
+    ret = lookup_dentry_in_pdentry(&look_path.last_path,
+                                   look_path.look_dentry, NULL,
+                                   &son_file_dentry);
+    if (ret < 0) {
+        return ret;
     }
-    parent_node = look_path.look_dentry->file_node;
     
     printk(PT_DEBUG,"%s:%d, look_path.look_dentry.name=%s parent_node_addr=%lx\n\r",__FUNCTION__,__LINE__,look_path.look_dentry->file_name.path_name,(unsigned long)parent_node);
     /*
         dentry cache 已经管理inode 节点
     */
     ret = check_mknod(son_file_dentry,parent_node,mode,dev);
-    dput(son_file_dentry);
-lookup_dentry_faile:
-
-resolve_path_fail:
-
-    printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
-
-    dlist_t *cur_list;
-    dlist_t *list_head;
-    xdentry *cur_dentry;
-    list_head = &look_path.look_dentry->children_list_head;
-    list_for_each(cur_list, list_head){
-            cur_dentry = list_entry(cur_list,xdentry,ch_at_parent_list);
-            
-            printk(PT_DEBUG,"%s:%d,do_mkdirat->dir=%s\n\r",__FUNCTION__,__LINE__,cur_dentry->file_name.path_name);
-      }
+    /* 缓存目录项由父目录持有；这里未取得额外引用，不能 dput。 */
 	return ret;
 
 }

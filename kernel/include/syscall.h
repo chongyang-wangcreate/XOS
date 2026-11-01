@@ -35,6 +35,8 @@ int sys_call_entry(int sys_call_no,struct pt_regs *regs);
 
 extern int sys_nano_sleep(int seconds);
 extern int sys_mkdir(const char  *pathname, int mode);
+/* 内核调用方传入内核地址；sys_mkdir 仅接收用户地址。 */
+extern int xos_mkdir(const char *pathname, int mode);
 extern int  sys_mknod(const char *pathname,mode_t mode,devno_t dev);
 extern int do_sys_open(char *path_name,int flags, int mode)
 ;

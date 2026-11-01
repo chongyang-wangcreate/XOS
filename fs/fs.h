@@ -213,6 +213,7 @@ typedef struct xos_inode_ops{
     int (*mknod) (struct xos_inode *,struct xos_dentry *,int,devno_t);
     struct xos_dentry * (*lookup) (struct xos_inode *,struct xos_dentry *, struct fs_path_lookup *);
     int (*follow_link) (struct xos_dentry *, struct fs_path_lookup *);
+    int (*readlink) (struct xos_inode *, char *, unsigned int);
     int (*setattr)(struct xos_dentry *, struct iattr *);
 
 }xinode_ops_t;
@@ -398,6 +399,7 @@ extern xinode *alloc_cache_xinode();
 extern int resolve_path(char *mount_path, int flags,  lookup_path_t *look_path);
 extern xdentry *find_in_pdentry(xdentry *parent, path_name_t *name);
 extern xdentry *xdentry_cache_alloc_init(xdentry *parent,const path_name_t *name);
+extern xdentry *xdentry_get_or_create(xdentry *parent, const path_name_t *name);
 
 //extern void  init_inode_cache(void);
 extern void  init_inode_cache(void);
@@ -412,7 +414,8 @@ extern int is_alloc_dentry_cache(xdentry *dentry_node);
 extern xdentry *find_in_pdentry_unlock(xdentry *parent, path_name_t *name);
 extern xdentry *dentry_from_child_link(dlist_t *node);
 extern xdentry *alloc_dentry_cache();
-extern xdentry *lookup_dentry_in_pdentry(path_name_t *name, xdentry * p_dir,lookup_path_t *look);
+extern int lookup_dentry_in_pdentry(path_name_t *name, xdentry *p_dir,
+                                   lookup_path_t *look, xdentry **result);
 
 
 
@@ -420,7 +423,6 @@ extern xdentry *lookup_dentry_in_pdentry(path_name_t *name, xdentry * p_dir,look
     comm
 */
 
-extern xdentry *lookup_dentry_in_pdentry(path_name_t *name, xdentry * p_dir,lookup_path_t *look);
 extern int resolve_path(char *mount_path, int flags,  lookup_path_t *look_path);
 
 #endif

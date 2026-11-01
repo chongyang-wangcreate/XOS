@@ -89,19 +89,24 @@ xinode *alloc_cache_xinode()
             }
         }
     }
-    xos_unspinlock(&g_file_lock);
-    if(list_is_empty(&node_pool.cache_free_list)){
-        xcache_node = xos_kmalloc(sizeof(xinode));
-        if(!xcache_node){
-            return NULL;
-        }
-        xcache_node->in_cache_pool = 0;
-        list_add_back(&xcache_node->cache_list, &node_pool.cache_using_list);
-    }else{
-        head_node = &node_pool.cache_free_list;
-        xcache_node = list_entry(head_node->next,xinode,cache_list);
+    if (!list_is_empty(&node_pool.cache_free_list)) {
+        head_node = node_pool.cache_free_list.next;
+        list_del(head_node);
+        list_add_back(head_node, &node_pool.cache_using_list);
+        xcache_node = list_entry(head_node, xinode, cache_list);
+        xos_unspinlock(&g_file_lock);
+        return xcache_node;
     }
-
+    xos_unspinlock(&g_file_lock);
+    xcache_node = xos_kmalloc(sizeof(xinode));
+    if (!xcache_node) {
+        return NULL;
+    }
+    xcache_node->in_cache_pool = 0;
+    xos_spinlock_init(&xcache_node->lock);
+    xos_spinlock(&g_file_lock);
+    list_add_back(&xcache_node->cache_list, &node_pool.cache_using_list);
+    xos_unspinlock(&g_file_lock);
     return xcache_node;
 }
 
@@ -110,6 +115,7 @@ xinode *alloc_cache_xinode()
 void free_cache_xinode(xinode  * new_node){
 
     node_man_t *inode_man = (node_man_t*)new_node;
+    xos_spinlock(&g_file_lock);
     if(inode_man->in_cache_pool == 1){
         inode_man->alloc_flags = 0;
         node_pool.cache_pool_free_cnt++;
@@ -118,6 +124,7 @@ void free_cache_xinode(xinode  * new_node){
         list_del(&new_node->cache_list);
         list_add_back(&new_node->cache_list, &node_pool.cache_free_list);
     }
+    xos_unspinlock(&g_file_lock);
 }
 
 
@@ -170,6 +177,7 @@ void  init_inode_cache(void)
 {
     int i;
     node_pool.icache_pool = xos_kmalloc(sizeof(node_man_t)*CACHE_NODE_NR);
+    memset(node_pool.icache_pool, 0, sizeof(node_man_t)*CACHE_NODE_NR);
     node_pool.cache_pool_max_cnt = CACHE_NODE_NR;
     node_pool.cache_pool_free_cnt = CACHE_NODE_NR;
     node_pool.cache_pool_using_cnt = 0;
@@ -399,34 +407,24 @@ void old_switch_to_parent_dir(lookup_path_t *look)
 static int lookup_file_in_pdentry(lookup_path_t *look, 
              xmount_t **fetch_son_mnt, xdentry **fetch_son_dentry)
 {
-    int ret = -1;
-    xdentry tmp_dentry;
     xmount_t *mnt = look->look_mnt;
+    xinode *parent_node = look->look_dentry->file_node;
     printk(PT_RUN,"%s:%d,name->path_name=%s,look->look_dentry.path_name=%s\n\r",__FUNCTION__,__LINE__,look->cur_path.path_name,look->look_dentry->file_name.path_name);
+    if (!parent_node || !S_ISDIR(parent_node->node_mode)) {
+        return -ENOTDIR;
+    }
     xdentry *dentry_cache = find_in_pdentry(look->look_dentry, &look->cur_path);
-    if((!dentry_cache)&&(look->flags & LOOKUP_FOLLOW)){
-        /*LOOKUP_FOLLOW 作用要求文件或目录必须存在*/
+    if (!dentry_cache && parent_node->inode_ops != NULL &&
+        parent_node->inode_ops->lookup != NULL) {
         printk(PT_RUN,"%s:%d,look->cur_path.path_name=%s\n\r",__FUNCTION__,__LINE__,look->cur_path.path_name);
 
         /*快速缓存查找如果失败，则通过lookup查找*/
-        if(look->look_dentry->file_node->inode_ops->lookup){
-            dentry_cache = look->look_dentry->file_node->inode_ops->lookup(look->look_dentry->file_node, &tmp_dentry, look); 
-            if(!dentry_cache){
-                ret = -ENOMEM;
-            }
-        }
-        ret = - ENOENT;
-        return ret;  /*文件不存在返回错误码*/
+        dentry_cache = parent_node->inode_ops->lookup(parent_node,
+                                                       look->look_dentry, look);
     }
-    /*缓存中找不到创建，判断条件待完善*/
-    else if((!dentry_cache)){
-        dentry_cache = xdentry_cache_alloc_init(look->look_dentry, &look->cur_path);
-        printk(PT_RUN,"%s:%d,dentry_cache=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)dentry_cache);
-
-        if (!dentry_cache){
-            ret = -ENOMEM;
-            goto dentry_alloc_fail;
-        }
+    /* Only the create path may allocate a negative dentry. */
+    if (!dentry_cache || !dentry_cache->file_node) {
+        return -ENOENT;
     }
     /*
            如 /home      home 对应的mnt 和dentry_cache
@@ -435,10 +433,6 @@ static int lookup_file_in_pdentry(lookup_path_t *look,
     *fetch_son_mnt = mnt;
     *fetch_son_dentry = dentry_cache;
     return 0;
-dentry_alloc_fail:
-        
-    printk(PT_DEBUG,"%s:%d,dentry_cache=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)dentry_cache);
-    return ret;
 }
 
 
@@ -446,6 +440,9 @@ dentry_alloc_fail:
 
 int no_parse_store_final_component(lookup_path_t *look_path)
 {
+    if (look_path->cur_path.len >= XOS_DENTRY_NAME_MAX) {
+        return -ENAMETOOLONG;
+    }
     /**
      * 用last_path 存储最后一个路径分量
      */
@@ -479,11 +476,113 @@ int no_parse_store_final_component(lookup_path_t *look_path)
 
 }
 
+#define XOS_SYMLINK_MAX_FOLLOWS 40U
+#define XOS_SYMLINK_PATH_MAX 4096U
+
+int xos_vfs_readlink(const char *path, char *target, unsigned int capacity)
+{
+    lookup_path_t look = {0};
+    xinode *node;
+    int ret;
+
+    if (!path || !target || !capacity) {
+        return -EINVAL;
+    }
+    ret = resolve_path((char *)path, 0, &look);
+    if (ret < 0) {
+        return ret;
+    }
+    node = look.look_dentry ? look.look_dentry->file_node : NULL;
+    if (!node) {
+        return -ENOENT;
+    }
+    if (!S_ISLNK(node->node_mode)) {
+        return -EINVAL;
+    }
+    if (!node->inode_ops || !node->inode_ops->readlink) {
+        return -ENOTSUP;
+    }
+    return node->inode_ops->readlink(node, target, capacity);
+}
+
+static int xos_follow_symlink(lookup_path_t *look, xdentry *link,
+                              xmount_t *parent_mnt, xdentry *parent,
+                              const char *remainder)
+{
+    xinode *node = link->file_node;
+    char *target;
+    unsigned int target_len;
+    unsigned int tail_len = remainder ? strlen(remainder) : 0;
+    path_name_t old_component = look->cur_path;
+    int ret;
+
+    if (node->inode_ops == NULL || node->inode_ops->readlink == NULL) {
+        return -ELOOP;
+    }
+    if (look->symlink_depth >= XOS_SYMLINK_MAX_FOLLOWS) {
+        return -ELOOP;
+    }
+    target = xos_kmalloc(XOS_SYMLINK_PATH_MAX + 1U);
+    if (target == NULL) {
+        return -ENOMEM;
+    }
+    memset(target, 0, XOS_SYMLINK_PATH_MAX + 1U);
+    ret = node->inode_ops->readlink(node, target, XOS_SYMLINK_PATH_MAX + 1U);
+    if (ret <= 0) {
+        if (ret == 0) ret = -EINVAL;
+        goto out;
+    }
+    target_len = (unsigned int)ret;
+    if (target_len > XOS_SYMLINK_PATH_MAX ||
+        (tail_len != 0 && (target_len == XOS_SYMLINK_PATH_MAX ||
+         tail_len > XOS_SYMLINK_PATH_MAX - target_len - 1U))) {
+        ret = -ENAMETOOLONG;
+        goto out;
+    }
+    if (strlen(target) != target_len) {
+        ret = -EINVAL;
+        goto out;
+    }
+    if (tail_len != 0) {
+        target[target_len++] = '/';
+        memcpy(target + target_len, remainder, tail_len + 1);
+    } else {
+        target[target_len] = '\0';
+    }
+    if (target[0] == '/') {
+        look->look_mnt = current_task->fs_context.root_dentry_mount;
+        look->look_dentry = current_task->fs_context.root_dentry;
+    } else {
+        look->look_mnt = parent_mnt;
+        look->look_dentry = parent;
+    }
+    look->symlink_depth++;
+    look->path_type = PATH_NORMAL;
+    ret = real_lookup_path(target, look);
+    look->symlink_depth--;
+    if (ret == 0 && (look->flags & LOOKUP_PARENT)) {
+        if (look->last_path.len >= sizeof(look->last_name_buf)) {
+            ret = -ENAMETOOLONG;
+        } else {
+            memcpy(look->last_name_buf, look->last_path.path_name,
+                   look->last_path.len);
+            look->last_name_buf[look->last_path.len] = '\0';
+            look->last_path.path_name = look->last_name_buf;
+        }
+    }
+    look->cur_path = old_component;
+out:
+    xos_kfree(target);
+    return ret;
+}
+
 int parse_final_component(lookup_path_t *look_path,int flags){
 
     int ret;
     xinode *file_node;
     xmount_t *son_file_mnt;
+    xmount_t *parent_mnt = look_path->look_mnt;
+    xdentry *parent = look_path->look_dentry;
     xdentry  *son_file_dentry_node;
     
     printk(PT_RUN,"%s:%d,look_path->flags=%x\n\r",__FUNCTION__,__LINE__,look_path->flags);
@@ -499,7 +598,6 @@ int parse_final_component(lookup_path_t *look_path,int flags){
 
     ret = lookup_file_in_pdentry(look_path, &son_file_mnt, &son_file_dentry_node);
     if(ret < 0){
-         ret = -ENOENT;
          goto look_failed;
     }
     printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
@@ -527,6 +625,11 @@ int parse_final_component(lookup_path_t *look_path,int flags){
         ret = -ENOENT;
         goto look_failed;
     }
+    if ((look_path->flags & LOOKUP_FOLLOW) &&
+        S_ISLNK(file_node->node_mode)) {
+        return xos_follow_symlink(look_path, son_file_dentry_node,
+                                  parent_mnt, parent, NULL);
+    }
     /**
      if (S_ISDIR(inode->i_mode)) {
          add_flags = DCACHE_DIRECTORY_TYPE;
@@ -546,8 +649,9 @@ int parse_final_component(lookup_path_t *look_path,int flags){
         /**
          * 没有lookup说明这不是一个目录，返回ENOTDIR错误。
          */
-        if (!file_node->inode_ops || !file_node->inode_ops->lookup)
+        if (!S_ISDIR(file_node->node_mode)) {
             goto look_failed;
+        }
     }
     printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
     return 0;
@@ -603,6 +707,10 @@ int loop_split_path_component(char *path_name, lookup_path_t *look_path,int *err
     }
     file_node = look_path->look_dentry->file_node;
     while(1){
+        if (!file_node || !S_ISDIR(file_node->node_mode)) {
+            *error_code = -ENOTDIR;
+            return -ENOTDIR;
+        }
         ch_var = *path_name; /*有效字符非'/'和'\0',记录非常重要*/
         look_path->cur_path.path_name = (unsigned char*)path_name;
         /*
@@ -653,15 +761,8 @@ int loop_split_path_component(char *path_name, lookup_path_t *look_path,int *err
         *  loook_path.look_dentry  
        */
         ret = lookup_file_in_pdentry(look_path,  &son_file_mnt, &son_file_dentry_node);
-        if(ret == - ENOENT){
-            
-            *error_code = -ENOENT;
-            ret = *error_code;
-            return ret;
-        }else if(ret == -ENOMEM){
-            
-            *error_code = -ENOMEM;
-            ret = *error_code;
+        if(ret < 0){
+            *error_code = ret;
             return ret;
         }
          /**
@@ -681,9 +782,12 @@ int loop_split_path_component(char *path_name, lookup_path_t *look_path,int *err
             printk(PT_ERROR,"no file file no file%s:%d\n\r",__FUNCTION__,__LINE__);
             return ret;
         }
-        if(file_node->inode_ops->follow_link){
-            
-               
+        if (S_ISLNK(file_node->node_mode)) {
+            ret = xos_follow_symlink(look_path, son_file_dentry_node,
+                                      look_path->look_mnt,
+                                      look_path->look_dentry, path_name);
+            *error_code = ret;
+            return ret < 0 ? ret : RET_SYMLINK_RESOLVED;
          }else {
                 
                 /*
@@ -723,20 +827,25 @@ int loop_split_path_component(char *path_name, lookup_path_t *look_path,int *err
 */
 int real_lookup_path(char *mount_path, lookup_path_t *look_path)
 {
-    int lookup_flags = 0;
     int ret = -1;
     int error_code;
     ret = loop_split_path_component(mount_path,look_path,&error_code);
-    if(error_code == -ENOENT){
+    if (ret < 0) {
         printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
         return ret;
+    } else if (ret == RET_SYMLINK_RESOLVED) {
+        return 0;
     }else if(look_path->path_type == PATH_ROOT){
         printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
         return ret; /*root  no need for parser*/
-    }else if(ret == RET_LASTER_SLASH){ /*以'/'符号结束*/
-        
-        lookup_flags |= LOOKUP_FOLLOW | LOOKUP_DIRECTORY; /*目录*/
-        look_path->flags |= lookup_flags;
+    }else if(ret == RET_LASTER_SLASH && !(look_path->flags & LOOKUP_PARENT)){
+        /* 以'/'符号结束：必须是目录，最后一个链接也必须跟随。
+         * 不修改 flags，避免递归解析链接时污染调用方的查找选项。 */
+        int saved_flags = look_path->flags;
+        look_path->flags |= LOOKUP_FOLLOW | LOOKUP_DIRECTORY;
+        ret = last_component_handle(look_path);
+        look_path->flags = saved_flags;
+        return ret;
     }
     printk(PT_RUN,"%s:%d,ret=%d\n\r",__FUNCTION__,__LINE__,ret);
     ret = last_component_handle(look_path); /*通过look_path 传递并获取有用的信息*/
@@ -756,10 +865,24 @@ int real_lookup_path(char *mount_path, lookup_path_t *look_path)
 
 int resolve_path(char *path_name, int flags,  lookup_path_t *look_path)
 {
-    int ret = -1;
-    look_path->flags = 0;
-    get_trav_start_path(path_name, look_path);
-    look_path->flags |= flags;
+    int ret;
+    if (!path_name || !*path_name || !look_path) {
+        return -EINVAL;
+    }
+    look_path->cur_path.path_name = NULL;
+    look_path->cur_path.len = 0;
+    look_path->last_path.path_name = NULL;
+    look_path->last_path.len = 0;
+    look_path->ref = 0;
+    look_path->symlink_depth = 0;
+    look_path->flags = flags;
+    ret = get_trav_start_path(path_name, look_path);
+    if (ret < 0) {
+        return ret;
+    }
+    if (!look_path->look_mnt || !look_path->look_dentry) {
+        return -ENOENT;
+    }
     look_path->path_type = PATH_NORMAL;
     ret = real_lookup_path(path_name,look_path);
     return ret;

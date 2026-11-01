@@ -23,6 +23,7 @@
 #include "xos_cache.h"
 #include "xos_file.h"
 #include "task.h"
+#include "error.h"
 
 void xos_file_get(struct file *filp)
 {
@@ -57,7 +58,36 @@ void xos_file_put(struct file *filp)
     if (filp->f_ops != NULL && filp->f_ops->release != NULL) {
         filp->f_ops->release(filp->f_dentry->file_node, filp);
     }
+    if (filp->f_dentry != NULL) {
+        xos_spinlock(&inode_lock);
+        if (filp->f_dentry->file_node != NULL) {
+            filp->f_dentry->file_node->ref_count--;
+        }
+        xos_unspinlock(&inode_lock);
+    }
     xos_kfree(filp);
+}
+
+int do_sys_close(int fd)
+{
+    struct task_struct *task = current_task;
+    struct file *filp;
+
+    if (task == NULL || fd < 0 || fd >= MAX_FILE_NR) {
+        return -EBADF;
+    }
+    xos_spinlock(&task->files_set.file_lock);
+    filp = task->files_set.file_set[fd];
+    if (filp != NULL) {
+        task->files_set.file_set[fd] = NULL;
+        clear_bit(task->files_set.fd_map.bit_start, fd);
+    }
+    xos_unspinlock(&task->files_set.file_lock);
+    if (filp == NULL){
+        return -EBADF;
+    } 
+    xos_file_put(filp);
+    return 0;
 }
 
 

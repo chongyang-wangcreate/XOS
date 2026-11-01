@@ -152,23 +152,7 @@ static int exec_read(int fd, uint64_t off, void *buf, uint64_t size)
 
 static int exec_close(int fd)
 {
-    struct task_struct *task = get_current_task();
-    struct file *filp;
-
-    if (task == NULL || fd < 0 || fd >= MAX_FILE_NR) {
-        return -1;
-    }
-
-    xos_spinlock(&task->files_set.file_lock);
-    filp = task->files_set.file_set[fd];
-    task->files_set.file_set[fd] = NULL;
-    clear_bit(task->files_set.fd_map.bit_start, fd);
-    xos_unspinlock(&task->files_set.file_lock);
-
-    if (filp != NULL) {
-        xos_file_put(filp);
-    }
-    return 0;
+    return do_sys_close(fd);
 }
 
 static int exec_reset_task_mm(struct task_struct *task, uint64_t *new_pgd_out)

@@ -32,9 +32,11 @@
 #include "task.h"
 #include "path.h"
 #include "xdentry.h"
+#include "uio.h"
 //#include "fcntl.h"
 
 #define AT_FDCWD  -100
+#define XOS_MKDIR_PATH_MAX 4096U
 /*
     给大家找了一篇不错的文章帮助理解
     https://blog.csdn.net/lkqboy2599/article/details/9978453
@@ -44,7 +46,8 @@
 /*
     p_dir 最后一个路径分量的父亲
 */
-xdentry *lookup_dentry_in_pdentry(path_name_t *name, xdentry * p_dir,lookup_path_t *look)
+int lookup_dentry_in_pdentry(path_name_t *name, xdentry *p_dir,
+                            lookup_path_t *look, xdentry **result)
 {
     /*
         1. 先从缓存目录中查找问题
@@ -53,17 +56,47 @@ xdentry *lookup_dentry_in_pdentry(path_name_t *name, xdentry * p_dir,lookup_path
         4. 不存在创建
     */
     xdentry *ret_dentry = NULL;
-    xdentry tmp_dentry;
+    lookup_path_t local_lookup = {0};
+    if (result == NULL) {
+        return -EINVAL;
+    }
+    *result = NULL;
+    if (name == NULL || name->path_name == NULL || name->len == 0 ||
+        p_dir == NULL) {
+        return -EINVAL;
+    }
+    if (name->len >= XOS_DENTRY_NAME_MAX) {
+        return -ENAMETOOLONG;
+    }
+    if (p_dir->file_node == NULL) {
+        return -ENOENT;
+    }
+    if (!S_ISDIR(p_dir->file_node->node_mode)) {
+        return -ENOTDIR;
+    }
 //    xos_spinlock(&dentry_lock);
     ret_dentry = find_in_pdentry_unlock(p_dir, name);  //find_in_dcache
     if(!ret_dentry){
-        memcpy(&tmp_dentry.file_name,name,sizeof(path_name_t));
+        if (p_dir->file_node->inode_ops == NULL) {
+            return -EOPNOTSUPP;
+        }
         if(!p_dir->file_node->inode_ops->lookup){
+            if (IS_RDONLY(p_dir->file_node)) {
+                return -EROFS;
+            }
             ret_dentry = xdentry_cache_alloc_init(p_dir,name);
-        }else{
+        }else{  /*lookup*/
             printk(PT_RUN,"%s:%d,p_dir->name=%s\n\r",__FUNCTION__,__LINE__,p_dir->file_name.path_name);
-            ret_dentry = p_dir->file_node->inode_ops->lookup(p_dir->file_node, &tmp_dentry, look);
+            if (look == NULL) {
+                local_lookup.cur_path = *name;
+                local_lookup.look_dentry = p_dir;
+                look = &local_lookup;
+            }
+            ret_dentry = p_dir->file_node->inode_ops->lookup(p_dir->file_node, p_dir, look);
             if(!ret_dentry){
+                if (IS_RDONLY(p_dir->file_node)) {
+                    return -EROFS;
+                }
                 /*
                     1.ret_dentry = alloc_new_dentry();
                     2. init ret_dentry
@@ -72,14 +105,20 @@ xdentry *lookup_dentry_in_pdentry(path_name_t *name, xdentry * p_dir,lookup_path
                     所以分配新ret_dentry 的时候直接初始化，将分配和初始化放在一块
                 */
                 ret_dentry = xdentry_cache_alloc_init(p_dir,name);
-                printk(PT_RUN,"%s:%d,ret_dentry->name=%s,p_dir->name=%s\n\r",__FUNCTION__,__LINE__,ret_dentry->file_name.path_name,p_dir->file_name.path_name);
+                if (ret_dentry) {
+                    printk(PT_DEBUG,"%s:%d,ret_dentry->name=%s,p_dir->name=%s\n\r",__FUNCTION__,__LINE__,ret_dentry->file_name.path_name,p_dir->file_name.path_name);
+                }
             }
 
         }
 
     }
 //    xos_unspinlock(&dentry_lock);
-    return ret_dentry;
+    if (ret_dentry == NULL) {
+        return -ENOMEM;
+    }
+    *result = ret_dentry;
+    return 0;
 }
 
 int check_create_fdir_node(xdentry *son_node_dentry,xinode *parent_node,int mode)
@@ -118,81 +157,92 @@ int do_mkdirat(int dir_fd, const char  *pathname, int mode)
     lookup_path_t look_path = {0};
     xinode *parent_node;
     xdentry *son_file_dentry;
-    int flags = LOOKUP_PARENT;
-    /*
-        缺少copy_from_user
-    */
-    ret = resolve_path((char*)pathname, flags,&look_path);
-    if(ret == 0 && (look_path.path_type == PATH_ROOT)){
-        goto root_finish;
-    }else if(look_path.path_type != PATH_NORMAL){
-        /*PATH_DOT, PATH_DOTDOT*/
-        goto error_path_type;
+    /* pathname 已由内核调用方提供，或由 sys_mkdir 复制到内核缓冲区。 */
+    ret = resolve_path((char*)pathname, LOOKUP_PARENT, &look_path);
+    if (ret < 0) {
+        return ret; /*父目录不存在*/
+    }
+    /* mkdir 的目标若是根目录、. 或 ..，对应目录本身已经存在。 */
+    if (look_path.path_type == PATH_ROOT) {
+        return -EEXIST;
+    }
+    if (look_path.path_type != PATH_NORMAL){
+        /* PATH_DOT、PATH_DOTDOT 也不是可创建的新目录名。 */
+        return -EEXIST;
     }
     
     printk(PT_RUN,"%s:%d,look_path->look_dentry.path_name=%s ,look_path->look_path.last_path=%s\n\r",__FUNCTION__,__LINE__,look_path.look_dentry->file_name.path_name,look_path.last_path.path_name);
 
-    if (ret == ENOENT){
-        goto invalid_path; /*父目录不存在*/
+    parent_node = look_path.look_dentry->file_node;
+    if (!parent_node) {
+        return -ENOENT;
+    }
+    if (!S_ISDIR(parent_node->node_mode)) {
+        return -ENOTDIR;
+    }
+    if (IS_RDONLY(parent_node)) {
+        return -EROFS;
+    }
+    if (!parent_node->inode_ops || !parent_node->inode_ops->mkdir) {
+        return -EPERM;
     }
     /*
         find file in parent dir
     */
-    look_path.flags &= ~LOOKUP_PARENT;
-    
     printk(PT_RUN,"%s:%d,p_dir->name=%s\n\r",__FUNCTION__,__LINE__,look_path.look_dentry->file_name.path_name);
-    son_file_dentry = lookup_dentry_in_pdentry(&look_path.last_path, look_path.look_dentry, NULL);
-    if(!son_file_dentry){
-        ret = -ENOMEM;
-        goto no_mem; /*标签后续更改*/
+    ret = lookup_dentry_in_pdentry(&look_path.last_path,
+                                   look_path.look_dentry, NULL,
+                                   &son_file_dentry);
+    if (ret < 0) {
+        return ret;
     }
     printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
-    parent_node = look_path.look_dentry->file_node;
     ret = check_create_fdir_node(son_file_dentry,parent_node,mode);
-    dput(son_file_dentry);
-
-    return ret;//new add 20250301
-root_finish:
-    return ret;
-    
-no_mem:
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
-
-    dlist_t *cur_list;
-    dlist_t *list_head;
-    xdentry *cur_dentry;
-    list_head = &look_path.look_dentry->children_list_head;
-    list_for_each(cur_list, list_head){
-            cur_dentry = list_entry(cur_list,xdentry,ch_at_parent_list);
-            printk(PT_DEBUG,"%s:%d,do_mkdirat->dir=%s\n\r",__FUNCTION__,__LINE__,cur_dentry->file_name.path_name);
-    }
-    /*
-        to do 
-        release reference count 
-        if(ref_count == 0){
-            
-        }
-    */
-    look_path.ref--;
-    look_path.look_mnt->ref_count--;
-    return ret;
-
-invalid_path:
-    /*
-        to do 
-        may be: mem free   ref_count sub
-        
-    */
-error_path_type:
+    /* 缓存目录项由父目录持有；这里未取得额外引用，不能 dput。 */
     return ret;
 }
 
-int sys_mkdir(const char  *pathname, int mode)
+/*
+    专门为内核态封装的mkdir
+*/
+int xos_mkdir(const char *pathname, int mode)
 {
-    /*
-        1. copy_from_user
-    */
-    printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
     return do_mkdirat(AT_FDCWD, pathname, mode);
+}
+
+/*
+    适配系统调用的mkdir ,需要copy_from_user
+*/
+int sys_mkdir(const char *pathname, int mode)
+{
+    char *kernel_path;
+    uint32 length;
+    int ret = -ENAMETOOLONG;
+
+    if (pathname == NULL) {
+        return -EFAULT;
+    }
+    kernel_path = xos_kmalloc(XOS_MKDIR_PATH_MAX + 1U);
+    if (kernel_path == NULL) {
+        return -ENOMEM;
+    }
+    /* 按字节拷贝，避免一次复制跨越未映射页或越过字符串结尾。 */
+    for (length = 0; length <= XOS_MKDIR_PATH_MAX; length++) {
+        if (copy_from_user(&kernel_path[length], pathname + length, 1) != 0) {
+            ret = -EFAULT;
+            break;
+        }
+
+        if (kernel_path[length] == '\0') {
+            if (length == XOS_MKDIR_PATH_MAX) {
+                ret = -ENAMETOOLONG;
+            } else {
+                ret = xos_mkdir(kernel_path, mode);
+            }
+            break;
+        }
+    }
+    xos_kfree(kernel_path);
+    return ret;
 }
 

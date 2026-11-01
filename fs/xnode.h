@@ -9,6 +9,7 @@ enum loop_ret_val{
     RET_ROOT,
     RET_NORMAL_COMPONET,
     RET_LASTER_SLASH,
+    RET_SYMLINK_RESOLVED,
 
 };
 typedef unsigned long size_t;
@@ -104,5 +105,7 @@ extern void free_cache_xinode(xinode  * new_node);
 extern void switch_to_parent_dir(lookup_path_t *look_path);
 
 
+
+extern int xos_vfs_readlink(const char *path, char *target, unsigned int capacity);
 
 #endif
