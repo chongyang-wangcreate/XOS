@@ -28,6 +28,9 @@
 #include "bit_map.h"
 #include "spinlock.h"
 #include "xos_mutex.h"
+#include "xos_devfs.h"
+#include "fs.h"
+#include "error.h"
 #include "printk.h"
 #include "xos_kern_def.h"
 #include "xos_cache.h"
@@ -220,6 +223,7 @@ int register_chrdev_region(devno_t devno,  unsigned count,const char *name)
 void xcdev_init(xcdev_t *cdev, struct xos_file_ops *fops)
 {
     cdev->char_ops = fops;
+    cdev->device.device_name = NULL;
     list_init(&cdev->char_dev_list);
     
 }
@@ -228,6 +232,7 @@ void xcdev_add(xcdev_t *cdev, devno_t devno, unsigned count)
 {
     dlist_t *chrdev_list_head;
     int major,minor;
+    int ret;
     major = devno >> 20;
     minor = devno &(0xfffff);
     cdev->devnum = devno;
@@ -236,6 +241,15 @@ void xcdev_add(xcdev_t *cdev, devno_t devno, unsigned count)
     printk(PT_DEBUG,"%s:%d,minor=%d,cdev->devnum=%d\n\r",__FUNCTION__,__LINE__,minor,cdev->devnum);
     list_add_back(&cdev->char_dev_list, chrdev_list_head);
     xos_unspinlock(&g_chrdev_val.chrdev_lock);
+    /* 驱动指定名称时，注册完成后发布字符设备节点。 */
+    if (cdev->device.device_name != NULL) {
+        ret = devfs_device_add(cdev->device.device_name, S_IFCHR,
+                               devno, cdev);
+        if (ret < 0 && ret != -ENODEV) {
+            printk(PT_WARRING, "char device %s: devfs node add failed (%d)\n",
+                   cdev->device.device_name, ret);
+        }
+    }
     printk(PT_DEBUG,"%s:%d,minor=%d\n\r",__FUNCTION__,__LINE__,minor);
 }
 
@@ -274,6 +288,17 @@ xcdev_t* xcdev_loopup(devno_t      devno, int *index)
 void xcdev_del(xcdev_t *cdev)
 {
     int major;
+    int ret;
+
+    if (cdev->device.device_name != NULL) {
+        ret = devfs_device_remove(cdev->device.device_name, S_IFCHR,
+                                  cdev->devnum, cdev);
+        if (ret < 0 && ret != -ENOENT && ret != -ENODEV) {
+            printk(PT_WARRING, "char device %s: devfs node remove failed (%d)\n",
+                   cdev->device.device_name, ret);
+            return;
+        }
+    }
     major = cdev->devnum >> 20;
     xos_spinlock(&g_chrdev_val.chrdev_lock);
     g_chrdev_val.ref_count[major] --;

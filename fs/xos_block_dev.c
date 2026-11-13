@@ -7,6 +7,7 @@
 #include "xos_disk.h"
 #include "xos_partition.h"
 #include "printk.h"
+#include "xos_devfs.h"
 
 /*
     2025.7.22 嘉兴平湖乍浦海边，看到一排排排放整齐的船突然想起我一直待开发的块设备，给了我很大灵感，每艘船就像一个个磁盘块
@@ -96,6 +97,7 @@ int xos_blockdev_register(xos_block_device_t *bdev)
 {
     dlist_t *node;
     xos_block_device_t *registered;
+    int ret;
 
     if (!xos_blockdev_is_ready) {
         return -ENODEV;
@@ -120,7 +122,8 @@ int xos_blockdev_register(xos_block_device_t *bdev)
     xos_spinlock_init(&bdev->lock);
     xos_spinlock_init(&bdev->io_lock);
     sem_init(&bdev->sem, 1, SEM_MUTEXT);
-    bdev->ref_count = 1;
+    /* 发布 devfs 节点之前持有临时引用，注销不能抢在节点创建之前完成。 */
+    bdev->ref_count = 2;
     bdev->registered = 1;
     if (bdev->parent == NULL) {
         bdev->parent = bdev;
@@ -131,6 +134,13 @@ int xos_blockdev_register(xos_block_device_t *bdev)
     xos_block_io_queue_init(&bdev->request_queue, bdev);
     list_add_back(&bdev->list, &xos_blockdev_list);
     xos_unspinlock(&xos_blockdev_list_lock);
+    /* /dev 可能尚未挂载；此时设备注册仍然有效。 */
+    ret = devfs_device_add(bdev->name, S_IFBLK | 0600, bdev->devno, bdev);
+    if (ret < 0 && ret != -ENODEV) {
+        printk(PT_WARRING, "blockdev %s: devfs node add failed (%d)\n",
+               bdev->name, ret);
+    }
+    xos_blockdev_put(bdev);
     return 0;
 }
 
@@ -181,19 +191,24 @@ int xos_blockdev_release(xos_block_device_t *bdev)
         return -EINVAL;
     }
     bdev->open_count--;
+    xos_unspinlock(&bdev->lock);
+
+    /* release 回调返回前保留设备引用，避免注销释放仍在运行的驱动对象。 */
+    if (bdev->ops != NULL && bdev->ops->release != NULL) {
+        ret = bdev->ops->release(bdev);
+    }
+    xos_spinlock(&bdev->lock);
     if (bdev->ref_count > 0) {
         bdev->ref_count--;
     }
     xos_unspinlock(&bdev->lock);
-
-    if (bdev->ops != NULL && bdev->ops->release != NULL) {
-        ret = bdev->ops->release(bdev);
-    }
     return ret;
 }
 
 int xos_blockdev_unregister(xos_block_device_t *bdev)
 {
+    int ret;
+
     if (!xos_blockdev_is_ready || bdev == NULL) {
         return -EINVAL;
     }
@@ -211,7 +226,22 @@ int xos_blockdev_unregister(xos_block_device_t *bdev)
         xos_unspinlock(&xos_blockdev_list_lock);
         return -EBUSY;
     }
+    /* 先阻止新的 get/open，再解锁撤销节点。保持设备占用注册表位置，
+       防止其他同名设备在注销过程中插入。失败时恢复注册状态。 */
     bdev->registered = 0;
+    xos_unspinlock(&bdev->lock);
+    xos_unspinlock(&xos_blockdev_list_lock);
+    ret = devfs_device_remove(bdev->name, S_IFBLK | 0600,
+                              bdev->devno, bdev);
+    if (ret < 0 && ret != -ENOENT && ret != -ENODEV) {
+        xos_spinlock(&bdev->lock);
+        bdev->registered = 1;
+        xos_unspinlock(&bdev->lock);
+        return ret;
+    }
+    xos_spinlock(&xos_blockdev_list_lock);
+    xos_spinlock(&bdev->lock);
+  
     bdev->ref_count = 0;
     list_del(&bdev->list);
     list_init(&bdev->list);

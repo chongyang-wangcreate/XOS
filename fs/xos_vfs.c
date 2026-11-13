@@ -41,7 +41,7 @@
 
 extern void fs_list_init();
 extern void init_ext4fs();
-
+extern int devfs_check_pending_device_add(void);
 
 /*
 
@@ -96,13 +96,13 @@ void xos_mount_fs()
 {
 
     printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
-    sys_mkdir("/dev", 0);
-    sys_mkdir("/home", 0);
-    sys_mkdir("/tmp", 0);
-    sys_mkdir("/etc", 0);
-    sys_mkdir("/home/wcy", 0);  /*wcy 最下层节点可能创建的存在问题*/
-    sys_mkdir("/home/test", 0);
-    sys_mkdir("/home/wcy1", 0);
+    xos_mkdir("/dev", 0);
+    xos_mkdir("/home", 0);
+    xos_mkdir("/tmp", 0);
+    xos_mkdir("/etc", 0);
+    xos_mkdir("/home/wcy", 0);  /*wcy 最下层节点可能创建的存在问题*/
+    xos_mkdir("/home/test", 0);
+    xos_mkdir("/home/wcy1", 0);
     printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
 
 
@@ -110,14 +110,19 @@ void xos_mount_fs()
         2024.12.28 17:03 mount 实现存在问题，正在找原因
         有可能锁的原因
     */
-    do_mount("devfs",0, "/dev","/dev",NULL);
+    if (do_mount("devfs",0, "/dev","/dev",NULL) == 0) {
+        int ret = devfs_check_pending_device_add();
+        if (ret < 0) {
+            printk(PT_ERROR, "devfs: pending device sync failed (%d)\n", ret);
+        }
+    }
     do_mount("tmpfs",0,"/tmp","/tmp",NULL); /*挂载*/
 
     /*
         open 设备节点的时候，通过名字找到对应的设备号
     */
     sys_mknod("/dev/wcy",S_IFCHR,10);
-    sys_mknod("/dev/ram0", S_IFBLK, XOS_RAMDISK_DEV_MAJOR);
+    /* ram0 及分区节点由块设备注册流程发布到 devfs。 */
 
 }
 

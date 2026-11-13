@@ -307,8 +307,10 @@ int console_init()
 //    ret = register_chrdev_region(devno,  baseminor,dev_name);
     printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
     xcdev_init(&cdev_console, &console_fops);
-    xcdev_add(&cdev_console, devno, 1);
-    sys_mknod("/dev/console",S_IFCHR,devno);  //自动创建设备节点xnode
+    cdev_console.device.device_name = dev_name;
+    xcdev_add(&cdev_console, devno, 1);/* 注册字符设备时自动在 devfs 创建 /dev/console 节点*/
+    
+    //sys_mknod("/dev/console",S_IFCHR,devno);
 
     return ret;
 }
