@@ -151,15 +151,24 @@ static int user_vma_map_page_fault(struct task_struct *tsk,
                                    uint64_t page_vaddr)
 {
     uint64_t phy_addr;
+    void *page_kva;
     int ret;
 
-    if (vma->pma_saddr == (uint64_t)-1) {
+    if (vma->pma_saddr == XOS_VMA_ANON_PA) {
         phy_addr = xos_alloc_user_page_pa();
         if (phy_addr == 0) {
             printk(PT_ERROR, "%s: no user page for va=%lx\n\r",
                    __FUNCTION__, page_vaddr);
             return -ENOMEM;
         }
+        /* 匿名页进入用户页表前必须清零，用户物理区需临时映射访问。 */
+        page_kva = xos_kmap_page_pa(phy_addr);
+        if (page_kva == NULL) {
+            xos_page_put(phy_addr);
+            return -ENOMEM;
+        }
+        memset(page_kva, 0, PAGE_SIZE);
+        xos_kunmap_page(page_kva);
     } else {
         phy_addr = vma->pma_saddr + (page_vaddr - vma->vm_start);
     }
@@ -167,7 +176,7 @@ static int user_vma_map_page_fault(struct task_struct *tsk,
     ret = map_page(tsk->task_pgd, (void *)page_vaddr, PAGE_SIZE,
                    phy_addr, user_vma_page_prot(vma));
     if(ret < 0){
-        if (vma->pma_saddr == (uint64_t)-1) {
+        if (vma->pma_saddr == XOS_VMA_ANON_PA) {
             xos_page_put(phy_addr);
         }
         printk(PT_ERROR, "%s: map_page failed va=%lx phyaddr=%lx ret=%d\n\r",
@@ -234,7 +243,7 @@ int page_fault(struct task_struct *tsk, uint64_t vaddr, uint64_t esr)
                 return -EINVAL;
             }
             memcpy(new_kva, (void *)page_align_vaddr, PAGE_SIZE);
-            xos_kunmap_page(new_kva);
+            xos_kunmap_page(new_kva); //取消映射
             *pte = (*pte & ~(PG_4k_ADDR_MASK | AP_MASK | PTE_COW)) |
                    (new_phy_addr & PG_4k_ADDR_MASK) | PG_RW_EL1_EL0;
             flush_user_tlb();

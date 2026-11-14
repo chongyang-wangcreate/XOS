@@ -240,6 +240,29 @@ xos_dtb_node_t *xos_get_node_by_compatible(const char *compatible)
     return 0;
 }
 
+xos_dtb_node_t *xos_dtb_get_node(uint32 index)
+{
+    return index < (uint32)g_dtb_node_count ? &g_dtb_nodes[index] : NULL;
+}
+
+xos_dtb_node_t *xos_get_node_by_compatible_index(const char *compatible,
+                                                 uint32 index)
+{
+    int i;
+
+    if (compatible == NULL) {
+        return NULL;
+    }
+    for (i = 0; i < g_dtb_node_count; i++) {
+        if (xos_dtb_node_is_compatible(&g_dtb_nodes[i], compatible)) {
+            if (index-- == 0) {
+                return &g_dtb_nodes[i];
+            }
+        }
+    }
+    return NULL;
+}
+
 int xos_dtb_get_irq(const xos_dtb_node_t *node,uint32 index,uint32 *irq)
 {
     if(node == NULL || irq == NULL || index >= node->nr_irqs){
@@ -670,6 +693,8 @@ static void parse_node_prop(xos_dtb_node_t *node,const char *name,
         if(str_eq((const char*)data,"disabled")){
             node->enabled = 0;
         }
+    }else if(str_eq(name,"non-removable")){
+        node->non_removable = 1;
     }else if(str_eq(name,"#address-cells") && len >= sizeof(uint32)){
         node->address_cells = fdt32_to_cpu(data[0]);
     }else if(str_eq(name,"#size-cells") && len >= sizeof(uint32)){
@@ -714,6 +739,9 @@ static int node_is_cpu(const xos_dtb_node_t *node)
 {
     if(node == NULL || !node->enabled){
         return 0;
+    }
+    if(node->nr_regs == 0){
+        return 0; /* 没有 reg 就无法建立可靠的 MPIDR 映射。 */
     }
     if(node->level != 2){
         return 0;

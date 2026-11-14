@@ -67,7 +67,8 @@ static inline u64 cur_cpuid(){
     if(cpuid >= 0){
         return cpuid;
     }
-    return read_mpidr_el1() & 0xff;
+    /* 拓扑发布前只有启动核在运行；不要用 Aff0 猜测数组下标。 */
+    return 0;
 }
 
 

@@ -88,8 +88,11 @@ enum {
     VM_EXEC  = 1 << 2,
     VM_SHARED  = 1 << 3,
     VM_FILE  = 1 << 4,
-    VM_IPC  = 1 << 5
+    VM_IPC  = 1 << 5,
+    VM_LAZY = 1 << 6 /* 匿名 VMA 保留地址空间，首次缺页时分配物理页 */
 };
+
+#define XOS_VMA_ANON_PA (~(uint64)0)
 
 
 

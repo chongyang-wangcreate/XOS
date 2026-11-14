@@ -89,7 +89,7 @@ typedef struct elf64_phdr {
 
 extern void init_mm(struct mm_struct *mm);
 extern int create_process_vma(struct task_struct *cur_task);
-extern void vma_space_maps(struct task_struct *t);
+extern int vma_space_maps(struct task_struct *t);
 extern uint64_t get_user_entry(void);
 extern int create_vma(struct task_struct *tsk, unsigned long vm_start,
                       unsigned long vm_end, unsigned long phy_addr,
@@ -425,7 +425,10 @@ static int exec_load_elf(struct task_struct *task, const char *pathname,
         goto out;
     }
 
-    vma_space_maps(task);
+    ret = vma_space_maps(task);
+    if (ret < 0) {
+        goto out;
+    }
     set_ttbr0_el1((uint64)V2P(task->task_pgd));
     exec_flush_user_tlb();
     image_installed = 1;
@@ -578,7 +581,9 @@ static int exec_rebuild_builtin_image(struct task_struct *task)
     if (create_process_vma(task) < 0) {
         return -1;
     }
-    vma_space_maps(task);
+    if (vma_space_maps(task) < 0) {
+        return -1;
+    }
 
     set_ttbr0_el1((uint64)V2P(task->task_pgd));
     exec_flush_user_tlb();

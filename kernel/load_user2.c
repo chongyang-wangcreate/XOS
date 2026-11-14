@@ -70,8 +70,6 @@ extern void add_to_cpu_runqueue(int cpuid,struct task_struct *task);
 #define USER_HEAD_END   0x20000000
 #define USER_HEAP_SIZE (USER_HEAD_END - USER_HEAP_START)
 
-#define INV_PHY_ADDR (-1)
-
 #define GET_PHY_OFF(vstart ,vbase) ((uint64)(vstart) - (uint64)(vbase))
 #define GET_PHY_START(pstart,vstart,vbase) (pstart + GET_PHY_OFF(vstart,vbase))
 
@@ -160,48 +158,66 @@ char task_kstack[8192] = {0};
 
 
 
-void vma_space_mapping(uint64_t *pg_dir, void *virt_addr,
+int vma_space_mapping(uint64_t *pg_dir, void *virt_addr,
                 uint64_t phy_addr, uint64_t size,
                 int wr_flags)
 {
+    uint64_t addr;
+    uint64_t end;
+    uint64_t prot = wr_flags ? PG_RO_EL1_EL0 : PG_RW_EL1_EL0;
+    int ret;
 
-    char *addr;
-    int i;
     if (pg_dir == NULL) {
-        printk(PT_RUN,"%s: pg_dir is null\n", __FUNCTION__);
-        return;
+        return -EINVAL;
     }
-    if (phy_addr == (0xffffffffffffffff)) {
-        return ;
-        addr = (char*) align_down(virt_addr, PTE_ENTRY_SIZE);
-        phy_addr = (uint64_t)xos_get_phy(0, 0);
-        for(i = 0; i < size ;i += PAGE_SIZE){
-            if(wr_flags){
-                map_page(pg_dir, addr, size, (uint64)phy_addr,PG_RO_EL1_EL0);
-            }else{
-                map_page(pg_dir, addr, size, (uint64)phy_addr,PG_RW_EL1_EL0);
-            }
-            addr += PAGE_SIZE;
-            phy_addr = (uint64_t)xos_get_phy(0, 0);
-            printk(PT_RUN,"%s: phy_addr=%lx\n", __FUNCTION__,(uint64)phy_addr);
-        
-        }
-    //    printk(PT_RUN,"%s: phy_addr=%lx\n", __FUNCTION__,(uint64)phy_addr);
-    }else{
-            addr = (char*) align_down(virt_addr, PTE_ENTRY_SIZE);
-            for(i = 0; i < size ;i += PAGE_SIZE){
-                if(!wr_flags){
-                    map_page(pg_dir, addr, size, (uint64)phy_addr,PG_RW_EL1_EL0);
-                }else{
-                    map_page(pg_dir, addr, size, (uint64)phy_addr,PG_RO_EL1_EL0);
-                }
-                
-                addr += PAGE_SIZE;
-                phy_addr += PAGE_SIZE;
-            }
-        
+    if (size == 0) {
+        return 0;
+    }
+    addr = align_down(virt_addr, PAGE_SIZE);
+    if (size > ~(uint64_t)0 - (uint64_t)virt_addr ||
+        (uint64_t)virt_addr + size > ~(uint64_t)0 - (PAGE_SIZE - 1)) {
+        return -EINVAL;
+    }
+    end = align_up((uint64_t)virt_addr + size, PAGE_SIZE);
+    if (phy_addr != XOS_VMA_ANON_PA &&
+        ((uint64_t)virt_addr & (PAGE_SIZE - 1)) !=
+        (phy_addr & (PAGE_SIZE - 1))) {
+        return -EINVAL;
     }
 
+    if (phy_addr == XOS_VMA_ANON_PA) {
+        prot |= ATTR_UXN | ATTR_PXN;
+        for (; addr < end; addr += PAGE_SIZE) {
+            uint64_t page_pa = xos_alloc_user_page_pa();
+            void *page_kva;
+
+            if (page_pa == 0) {
+                return -ENOMEM;
+            }
+            page_kva = xos_kmap_page_pa(page_pa);
+            if (page_kva == NULL) {
+                xos_page_put(page_pa);
+                return -ENOMEM;
+            }
+            /* 用户物理区没有内核线性映射，临时映射仅用于清零新页。 */
+            memset(page_kva, 0, PAGE_SIZE);
+            xos_kunmap_page(page_kva);
+            ret = map_page(pg_dir, (void *)addr, PAGE_SIZE, page_pa, prot);
+            if (ret < 0) {
+                xos_page_put(page_pa);
+                return ret;
+            }
+        }
+    } else {
+        phy_addr = align_down(phy_addr, PAGE_SIZE);
+        for (; addr < end; addr += PAGE_SIZE, phy_addr += PAGE_SIZE) {
+            ret = map_page(pg_dir, (void *)addr, PAGE_SIZE, phy_addr, prot);
+            if (ret < 0) {
+                return ret;
+            }
+        }
+    }
+    return 0;
 }
 
 
@@ -217,7 +233,7 @@ void user_page_mapping(uint64_t *pg_dir, void *virt_addr,
         printk(PT_RUN,"%s: pg_dir is null\n", __FUNCTION__);
         return;
     }
-    if (phy_addr == (0xffffffffffffffff)) {
+    if (phy_addr == XOS_VMA_ANON_PA) {
         printk(PT_DEBUG,"%s: pg_dir is null\n", __FUNCTION__);
         addr = (char*) align_down(virt_addr, PTE_ENTRY_SIZE);
         page_phy = xos_get_user_phy(0, 0);
@@ -254,22 +270,30 @@ void user_page_mapping(uint64_t *pg_dir, void *virt_addr,
 
 
 
-void vma_space_maps(struct task_struct *t)
+int vma_space_maps(struct task_struct *t)
 {
     struct vm_area_struct *vma;
     int wr_flags;
-    if (t == NULL) {
-        printk(PT_RUN,"%s: task is null\n", __FUNCTION__);
-        return;
+    int ret;
+
+    if (t == NULL || t->mm == NULL || t->task_pgd == NULL) {
+        return -EINVAL;
     }
 
     for (vma = t->mm->mmap; vma != NULL; vma = vma->vm_next) {
+        /* 堆可保留大于物理内存的虚拟范围，按需由 page_fault 分配。 */
+        if (vma->vm_flags & VM_LAZY) {
+            continue;
+        }
         wr_flags = !(vma->vm_flags & VM_WRITE);
-        vma_space_mapping(t->task_pgd, (void *)vma->vm_start,
-        vma->pma_saddr,
-        (vma->vm_end - vma->vm_start),
-        wr_flags);
+        ret = vma_space_mapping(t->task_pgd, (void *)vma->vm_start,
+                                vma->pma_saddr, vma->vm_end - vma->vm_start,
+                                wr_flags);
+        if (ret < 0) {
+            return ret;
+        }
     }
+    return 0;
 }
 
 
@@ -395,7 +419,7 @@ int create_heap_vma(struct task_struct *cur_task,uint64 heap_start,uint64 heap_e
     int ret = 0;
     ret = create_vma(cur_task, (uint64)heap_start,
         (uint64)heap_end,
-        (uint64)(usr_phy_start), VM_READ | VM_WRITE);
+        (uint64)(usr_phy_start), VM_READ | VM_WRITE | VM_LAZY);
     if (ret < 0) {
         printk(PT_DEBUG,"setup_vma for user heap failed\n");
         ret = -EHEAP_VMA;
@@ -473,7 +497,7 @@ int create_process_vma(struct task_struct *cur_task)
          printk(PT_DEBUG,"%s:%d\n",__FUNCTION__,__LINE__);
         return ret;
     }
-    ret = create_stack_vma(cur_task,user_stack_start,user_stack_end,(uint64)INV_PHY_ADDR);
+    ret = create_stack_vma(cur_task,user_stack_start,user_stack_end,XOS_VMA_ANON_PA);
     if(ret < 0){
          printk(PT_DEBUG,"%s:%d\n",__FUNCTION__,__LINE__);
         return ret;
@@ -481,7 +505,7 @@ int create_process_vma(struct task_struct *cur_task)
 
     cur_task->mm->start_brk = user_bss_end;
     cur_task->mm->end_brk = cur_task->mm->start_brk + USER_HEAP_SIZE;
-    ret = create_heap_vma(cur_task,(uint64)cur_task->mm->start_brk,(uint64)cur_task->mm->end_brk ,(uint64)INV_PHY_ADDR);
+    ret = create_heap_vma(cur_task,(uint64)cur_task->mm->start_brk,(uint64)cur_task->mm->end_brk, XOS_VMA_ANON_PA);
     if(ret < 0){
         return ret; 
     }
@@ -537,7 +561,10 @@ int process_create(void)
     if(ret < 0){
         goto alloc_stack_faild;
     }
-    vma_space_maps(cur_task);
+    ret = vma_space_maps(cur_task);
+    if (ret < 0) {
+        goto alloc_stack_faild;
+    }
     printk(PT_DEBUG,"%s:%d\n",__FUNCTION__,__LINE__);
 
     user_entry_addr = get_user_entry();
@@ -630,7 +657,7 @@ alloc_stack_faild:
         cur_task->resource_flags &= ~TASK_RESOURCE_TASK;
         xos_free_page(cur_task);
     }
-    return -ENOMEM;
+    return ret < 0 ? ret : -ENOMEM;
 
 }
 

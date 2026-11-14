@@ -42,6 +42,8 @@
 #include "error.h"
 
 cpu_desc_t cpu_array[CPU_NR];
+/* Early secondary entry reads this table before it has a per-CPU stack. */
+uint64 xos_cpu_boot_mpidrs[CPU_NR];
 int g_cpu_possible_count = 1;
 int g_cpu_ready;
 
@@ -160,82 +162,106 @@ char prio_table[128] = {
 
 };
 
-void cpu_desc_init()
+static void cpu_desc_init_queues(cpu_desc_t *cpu)
 {
-    int default_num = CPU_NR;
-    int real_cpu_num;
     int prio_num;
-    int i = 0;
-    int boot_cpuid = 0;
-    uint64 boot_mpidr = read_mpidr_el1();
-    xos_dtb_desc_t *dtb = xos_dtb_get_info();
-    memset(cpu_array,0,sizeof(cpu_array));
-    g_cpu_ready = 0;
-    if(dtb != NULL && dtb->valid && dtb->cpu_count > 0){
-        real_cpu_num = dtb->cpu_count;
-        if(real_cpu_num > default_num){
-            real_cpu_num = default_num;
-        }
+    for (prio_num = 0; prio_num < PRIO_MAX; prio_num++) {
+        list_init(&cpu->runqueue[prio_num].run_list);
+        list_init(&cpu->rt_runqueue[prio_num].run_list);
+        list_init(&cpu->normal_runqueue[prio_num].run_list);
+        list_init(&cpu->wait_que[prio_num].delay_list);
+        list_init(&cpu->wait_que[prio_num].event_list);
+        list_init(&cpu->wait_que[prio_num].wait_list);
     }
-    g_cpu_possible_count = real_cpu_num;
-    for(; i < real_cpu_num;i++){
-        cpu_array[i].cpuid = i;
-        cpu_array[i].possible = 1;
-        cpu_array[i].boot_state = XOS_CPU_OFFLINE;
-        if(dtb != NULL && dtb->valid && i < dtb->cpu_count){
-            cpu_array[i].mpidr = dtb->cpus[i].mpidr & MPIDR_HWID_MASK;
-            cpu_array[i].release_addr = dtb->cpus[i].release_addr;
-            strncpy(cpu_array[i].enable_method,dtb->cpus[i].enable_method,
-            sizeof(cpu_array[i].enable_method) - 1);
-        }else{
-            cpu_array[i].mpidr = i;
-        }
-        /*
-            set boot cpu
-        */
-       if(cpu_array[i].mpidr == boot_mpidr){
-            cpu_array[i].boot_cpu = 1;
-            boot_cpuid = i;
-       }
-        for(prio_num = 0;prio_num < PRIO_MAX;prio_num++){
-            list_init(&cpu_array[i].runqueue[prio_num].run_list);
-            list_init(&cpu_array[i].rt_runqueue[prio_num].run_list);
-            list_init(&cpu_array[i].normal_runqueue[prio_num].run_list);
-            list_init(&cpu_array[i].wait_que[prio_num].delay_list);
-            list_init(&cpu_array[i].wait_que[prio_num].event_list);
-            list_init(&cpu_array[i].wait_que[prio_num].wait_list);
-            cpu_array[i].run_count[prio_num] = 0;
-            cpu_array[i].rt_run_count[prio_num] = 0;
-            cpu_array[i].normal_run_count[prio_num] = 0;
-        }
-        list_init(&cpu_array[i].timer_list_head);
-        xos_spinlock_init(&cpu_array[i].lock);
-        xos_spinlock_init(&cpu_array[i].smp_call_lock);
-        cpu_array[i].bitmap_runque_start = 0;
-        cpu_array[i].bitmap_rt_runque_start = 0;
-        cpu_array[i].bitmap_normal_runque_start = 0;
-        cpu_array[i].bitmap_waitque_start = 0;
-        
-        cpu_array[i].run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_runque_start);
-        cpu_array[i].run_bitmap.btmp_bytes_len = 32;//32个bit
+    list_init(&cpu->timer_list_head);
+    xos_spinlock_init(&cpu->lock);
+    xos_spinlock_init(&cpu->smp_call_lock);
+    cpu->run_bitmap.bit_start = (uint8 *)&cpu->bitmap_runque_start;
+    cpu->run_bitmap.btmp_bytes_len = 32; //32个bit
+    cpu->wait_bitmap.bit_start = (uint8 *)&cpu->bitmap_waitque_start;
+    cpu->wait_bitmap.btmp_bytes_len = 32;
+    cpu->rt_run_bitmap.bit_start = (uint8 *)&cpu->bitmap_rt_runque_start;
+    cpu->rt_run_bitmap.btmp_bytes_len = 32;
+    cpu->normal_run_bitmap.bit_start = (uint8 *)&cpu->bitmap_normal_runque_start;
+    cpu->normal_run_bitmap.btmp_bytes_len = 32;
+}
 
-        cpu_array[i].wait_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_waitque_start);
-        cpu_array[i].wait_bitmap.btmp_bytes_len = 32;
-        cpu_array[i].run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_runque_start);
-        cpu_array[i].run_bitmap.btmp_bytes_len = 32;
-        cpu_array[i].rt_run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_rt_runque_start);
-        cpu_array[i].rt_run_bitmap.btmp_bytes_len = 32;
-        cpu_array[i].normal_run_bitmap.bit_start = (uint8*)&(cpu_array[i].bitmap_normal_runque_start);
-        cpu_array[i].normal_run_bitmap.btmp_bytes_len = 32;
+static void cpu_desc_set_topology(cpu_desc_t *cpu, int cpuid,
+                                  const xos_dtb_cpu_t *dt_cpu, uint64 mpidr)
+{
+    cpu->cpuid = cpuid;
+    cpu->possible = 1;
+    cpu->boot_state = XOS_CPU_OFFLINE;
+    cpu->mpidr = mpidr;
+    if (dt_cpu != NULL) {
+        cpu->release_addr = dt_cpu->release_addr;
+        strncpy(cpu->enable_method, dt_cpu->enable_method,
+                sizeof(cpu->enable_method) - 1);
     }
-    if(xos_mpidr_to_cpuid(boot_mpidr) < 0){
-        cpu_array[0].mpidr = boot_mpidr;
-        cpu_array[0].boot_cpu = 1;
-        boot_cpuid = 0;
+}
+
+void cpu_desc_init(void)
+{
+    const xos_dtb_desc_t *dtb = xos_dtb_get_info();
+    uint64 boot_mpidr = read_mpidr_el1();
+    const xos_dtb_cpu_t *boot_dt_cpu = NULL;
+    int count = 1;
+    int i;
+    int j;
+    uint64 mpidr;
+
+    g_cpu_ready = 0;
+    memset(cpu_array, 0, sizeof(cpu_array));
+    memset(xos_cpu_boot_mpidrs, 0, sizeof(xos_cpu_boot_mpidrs));
+
+    if (dtb != NULL && dtb->valid) {
+        for (i = 0; i < dtb->cpu_count && i < XOS_DTB_MAX_CPUS; i++) {
+            if (dtb->cpus[i].enable &&(dtb->cpus[i].mpidr & MPIDR_HWID_MASK) == boot_mpidr) {
+                boot_dt_cpu = &dtb->cpus[i];
+                break;
+            }
+        }
+        if (dtb->cpu_count && boot_dt_cpu == NULL) {
+            printk(PT_WARRING,
+                   "boot MPIDR 0x%lx absent from DT; only boot CPU enabled\n",
+                   boot_mpidr);
+        }
     }
+
+    cpu_desc_set_topology(&cpu_array[0], 0, boot_dt_cpu, boot_mpidr);
+    cpu_array[0].boot_cpu = 1;
+    if (boot_dt_cpu != NULL) {
+        for (i = 0; i < dtb->cpu_count && i < XOS_DTB_MAX_CPUS &&count < CPU_NR; i++) {
+           
+            if (!dtb->cpus[i].enable) {
+                continue;
+            }
+            mpidr = dtb->cpus[i].mpidr & MPIDR_HWID_MASK;
+            if (mpidr == boot_mpidr) {
+                continue;
+            }
+            for (j = 1; j < count; j++) {
+                if (cpu_array[j].mpidr == mpidr) {
+                    break;
+                }
+            }
+            if (j != count) {
+                printk(PT_WARRING, "duplicate CPU MPIDR 0x%lx in DT\n", mpidr);
+                continue;
+            }
+            cpu_desc_set_topology(&cpu_array[count], count, &dtb->cpus[i], mpidr);
+            count++;
+        }
+    }
+
+    for (i = 0; i < count; i++) {
+        cpu_desc_init_queues(&cpu_array[i]);
+        xos_cpu_boot_mpidrs[i] = cpu_array[i].mpidr;
+    }
+    g_cpu_possible_count = count;
+    dmb(ish);
     g_cpu_ready = 1;
-    xos_cpu_mark_online(boot_cpuid);
-    
+    xos_cpu_mark_online(0);
 }
 
 void xos_cpu_mark_starting(int cpuid)
@@ -283,7 +309,8 @@ int xos_mpidr_to_cpuid(u64 mpidr)
 
     mpidr &= MPIDR_HWID_MASK;
     if(!g_cpu_ready){
-        return (mpidr & 0xff) == 0 ? 0 : -1;
+        /* Only the boot CPU executes C before topology is published. */
+        return 0;
     }
     for(i = 0; i < g_cpu_possible_count; i++){
         if(cpu_array[i].possible && cpu_array[i].mpidr == mpidr){

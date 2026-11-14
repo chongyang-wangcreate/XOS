@@ -189,10 +189,27 @@ p_entry_virt:
 secondary_entry_virt:
     enable_fp
     mrs x0, mpidr_el1
-    and x0, x0, #MPIDR_MASK
+    ldr x4, =0xff00ffffff
+    and x0, x0, x4
+    ldr x4, =g_cpu_ready
+    ldar w4, [x4]
+    cbz w4, hang
+    ldr x4, =g_cpu_possible_count
+    ldr w4, [x4]
+    ldr x3, =xos_cpu_boot_mpidrs
+    mov x2, #0
+1:
+    cmp w2, w4
+    b.hs hang
+    ldr x5, [x3, x2, lsl #3]
+    cmp x0, x5
+    b.eq 2f
+    add x2, x2, #1
+    b 1b
+2:
     mov x1, #CPU_BOOT_STACK_SIZE
-    mul x2, x0, x1
-    add x2, x2, x1   //point to the top of the stack
+    add x2, x2, #1
+    mul x2, x2, x1
     ldr x3, =_percpu_boot_stack_start
     add x3, x3, x2
     mov sp, x3

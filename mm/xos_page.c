@@ -27,6 +27,7 @@
 #include "xos_zone.h"
 #include "printk.h"
 #include "spinlock.h"
+#include "string.h"
 
 extern uint64 l1_kernel_pgt[];
 
@@ -48,19 +49,64 @@ static void xos_kmap_flush_tlb(void)
     asm volatile("isb" ::: "memory");
 }
 
+static pte_t *xos_kmap_slot_pte(int create)
+{
+    uint64 va = (uint64)kmap_slot_va;
+    pgd_t *pgd = &l1_kernel_pgt[PGD_IDX(va)];
+    pmd_t *pmd_table;
+    pmd_t *pmd;
+    pte_t *pte_table;
+
+    if (!(*pgd & PT_ENTRY_VALID)) {
+        if (!create) {
+            return NULL;
+        }
+        pmd_table = xos_get_free_page(0, 0);
+        if (pmd_table == NULL) {
+            return NULL;
+        }
+        memset(pmd_table, 0, PAGE_SIZE);
+        *pgd = V2P(pmd_table) | PT_ENTRY_TABLE | PT_ENTRY_VALID;
+    } else if ((*pgd & (PT_ENTRY_VALID | PT_ENTRY_TABLE)) !=
+               (PT_ENTRY_VALID | PT_ENTRY_TABLE)) {
+        return NULL;
+    }
+
+    pmd_table = P2V(*pgd & PG_4k_ADDR_MASK);
+    pmd = &pmd_table[PMD_IDX(va)];
+    if (!(*pmd & PT_ENTRY_VALID)) {
+        if (!create) {
+            return NULL;
+        }
+        pte_table = xos_get_free_page(0, 0);
+        if (pte_table == NULL) {
+            return NULL;
+        }
+        memset(pte_table, 0, PAGE_SIZE);
+        *pmd = V2P(pte_table) | PT_ENTRY_TABLE | PT_ENTRY_VALID;
+    } else if ((*pmd & (PT_ENTRY_VALID | PT_ENTRY_TABLE)) !=
+               (PT_ENTRY_VALID | PT_ENTRY_TABLE)) {
+        return NULL;
+    }
+
+    pte_table = P2V(*pmd & PG_4k_ADDR_MASK);
+    return &pte_table[PTE_IDX(va)];
+}
+
 static void *xos_kmap_slot_map(uint64 pa)
 {
     pte_t *pte;
 
-
-    pte = copy_create_3level_page((pgd_t *)l1_kernel_pgt, kmap_slot_va);
-    if (pte == NULL) {
+    if ((pa & (PAGE_SIZE - 1)) != 0) {
+        return NULL;
+    }
+    pte = xos_kmap_slot_pte(1);
+    if (pte == NULL || (*pte & PT_ENTRY_VALID)) {
         return NULL;
     }
 
-    *pte = (pa & PG_4k_ADDR_MASK) | ACCESS_FLAG | SH_IN_SH | PG_RW_EL1 |
-           NON_SECURE_PA | PT_ATTRINDX(MT_NORMAL) | PT_ENTRY_PAGE |
-           PT_ENTRY_VALID;
+    *pte = pa | ACCESS_FLAG | SH_IN_SH | PG_RW_EL1 | ATTR_UXN | ATTR_PXN |
+           NON_SECURE_PA | PT_ATTRINDX(MT_NORMAL) | PT_ENTRY_PAGE | PT_ENTRY_VALID;
     kmap_slot_pa = pa;
     xos_kmap_flush_tlb();
     return (void *)kmap_slot_va;
@@ -74,7 +120,7 @@ static void xos_kmap_slot_unmap(void)
         return;
     }
 
-    pte = copy_create_3level_page((pgd_t *)l1_kernel_pgt, kmap_slot_va);
+    pte = xos_kmap_slot_pte(0);
     if (pte == NULL) {
         return;
     }
@@ -215,6 +261,9 @@ void *xos_kmap_page_pa(uint64 pa)
     xos_zone_t *zone;
     xos_page_t *page;
 
+    if ((pa & (PAGE_SIZE - 1)) != 0) {
+        return NULL;
+    }
     zone = xos_get_zone_by_pa(pa, &page);
     if (zone == NULL) {
         return NULL;
@@ -302,6 +351,7 @@ int xos_page_cache_init()
 {
     list_init(&page_cache_block.pg_list);
     xos_spinlock_init(&page_cache_block.pg_lock);
+    xos_spinlock_init(&kmap_slot_lock);
     kmap_slot_pa = 0;
     return 0;
 }

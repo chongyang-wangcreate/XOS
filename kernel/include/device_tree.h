@@ -83,6 +83,7 @@ typedef struct xos_dtb_node{
     uint32 nr_irqs;
     int    level;
     int    enabled;
+    int    non_removable;
 
 }xos_dtb_node_t;
 
@@ -123,6 +124,7 @@ extern void xos_dtb_set_boot_phys(uint64 phys);
 extern int xos_dtb_init(void);
 extern int xos_parse_dtb(void);
 extern xos_dtb_node_t *xos_get_node_by_compatible(const char *compatible);
+extern xos_dtb_node_t *xos_dtb_get_node(uint32 index);
 extern xos_dtb_node_t *xos_get_node_by_compatible_index(
     const char *compatible, uint32 index);
 extern xos_dtb_node_t *xos_get_node_by_phandle(uint32 phandle);

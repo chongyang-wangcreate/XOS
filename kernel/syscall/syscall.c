@@ -136,7 +136,6 @@ int do_syscall_mkdir(struct pt_regs *regs){
 
     const char* path_name = (char*)regs->regs[0];
     int mode = (int)regs->regs[1];
-    printk(PT_RUN,"%s:%d,path_name=%s,mode=%d\n\r",__FUNCTION__,__LINE__,path_name,mode);
     return  sys_mkdir(path_name, mode);
 
 }
