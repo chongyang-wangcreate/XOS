@@ -691,65 +691,56 @@ int last_component_handle( lookup_path_t *look_path)
 }
 
 
-int loop_split_path_component(char *path_name, lookup_path_t *look_path,int *error_code)
+static int loop_split_path_component(char *path_name, lookup_path_t *look_path)
 {
-    int ret = 0;
+    int ret;
     xinode *file_node;
-    char ch_var;
+    char *p = path_name;
+    char *end = p + strlen(p);
     xmount_t *son_file_mnt;
     xdentry  *son_file_dentry_node;
-    while (*path_name == '/'){
-     path_name++;
+
+    while (p < end && *p == '/') {
+        p++;
     }
-    if (!*path_name){
+    if (p == end) {
         look_path->path_type = PATH_ROOT;  /*表明当前是根目录*/
         return 0;
     }
     file_node = look_path->look_dentry->file_node;
-    while(1){
+    while (1) {
+        char *component_start;
+
         if (!file_node || !S_ISDIR(file_node->node_mode)) {
-            *error_code = -ENOTDIR;
             return -ENOTDIR;
         }
-        ch_var = *path_name; /*有效字符非'/'和'\0',记录非常重要*/
-        look_path->cur_path.path_name = (unsigned char*)path_name;
-        /*
-            ../home
-        */
-        do {
-            path_name++;
-            ch_var = *path_name;
-            printk(PT_RUN,"%s:%d,ch_var=%c\n\r",__FUNCTION__,__LINE__,ch_var);
 
-        } while(ch_var&&ch_var != '/'); /*loop until the condition not met*/
-        look_path->cur_path.len = (unsigned char*)path_name - look_path->cur_path.path_name;
-        printk(PT_RUN,"%s:%d,ch_var=%c\n\r",__FUNCTION__,__LINE__,ch_var);
-        /*
-            /home///test   test  may be a file or may be a dir
-        */
-        if(!ch_var){
-            ret = RET_NORMAL_COMPONET;
-            *error_code = 0;
-            printk(PT_RUN,"%s:%d\n\r",__FUNCTION__,__LINE__);
-            return ret;
+        look_path->cur_path.path_name = (unsigned char *)p;
+        component_start = p;
+        while (p < end && *p != '/') {
+            p++;
         }
-        do{
-            path_name++;
-        } while (*path_name == '/'); /*如果后续存在/ 分隔符继续跳过,mont_path 指向位置"home"中的h*/
-        if (!*path_name)  /*the end*/
-        {
-            ret = RET_LASTER_SLASH;
-            *error_code = 0;
-            return ret;
+        look_path->cur_path.len = p - component_start;
+        if (p == end) {
+            return RET_NORMAL_COMPONET;
         }
-         if ((look_path->cur_path.path_name[0] == '.') && (look_path->cur_path.len == 1)){
-            continue; 
-        }else if(look_path->cur_path.len == 2){
-            if((look_path->cur_path.path_name[0] == '.')&&(look_path->cur_path.path_name[1] == '.')){
-                    switch_to_parent_dir(look_path);
-                    file_node = look_path->look_dentry->file_node;
-                    continue;  
-            }
+
+        /* /home///test 中跳过连续分隔符，同时保留末尾斜杠信息。 */
+        while (p < end && *p == '/') {
+            p++;
+        }
+        if (p == end) {
+            return RET_LASTER_SLASH;
+        }
+        /* ../home: 中间的 . 和 .. 只更新遍历位置。 */
+        if (look_path->cur_path.len == 1 && look_path->cur_path.path_name[0] == '.') {
+            continue;
+        }
+        if (look_path->cur_path.len == 2 && look_path->cur_path.path_name[0] == '.' &&
+            look_path->cur_path.path_name[1] == '.') {
+            switch_to_parent_dir(look_path);
+            file_node = look_path->look_dentry->file_node;
+            continue;
         }
 
        printk(PT_RUN,"%s:%d,cur_path.path_name=%s\n\r",__FUNCTION__,__LINE__,look_path->cur_path.path_name);
@@ -762,7 +753,6 @@ int loop_split_path_component(char *path_name, lookup_path_t *look_path,int *err
        */
         ret = lookup_file_in_pdentry(look_path,  &son_file_mnt, &son_file_dentry_node);
         if(ret < 0){
-            *error_code = ret;
             return ret;
         }
          /**
@@ -777,30 +767,24 @@ int loop_split_path_component(char *path_name, lookup_path_t *look_path,int *err
         *  还需要判断目录 dentry 是否和具体的inode 关联
         */
         if (!file_node){
-            *error_code = -ENOENT;
-            ret = *error_code;
             printk(PT_ERROR,"no file file no file%s:%d\n\r",__FUNCTION__,__LINE__);
-            return ret;
+            return -ENOENT;
         }
         if (S_ISLNK(file_node->node_mode)) {
             ret = xos_follow_symlink(look_path, son_file_dentry_node,
                                       look_path->look_mnt,
-                                      look_path->look_dentry, path_name);
-            *error_code = ret;
+                                      look_path->look_dentry, p);
             return ret < 0 ? ret : RET_SYMLINK_RESOLVED;
-         }else {
-                
-                /*
-                    开始描述"/"对应的mnt 和dentry
-                    然后切换到下一个目录分量对应的dentry 和mnt, 描述"home"对应的mnt 和dentry
-                    继续切换到wangchongyang 目录分量，描述"wangchongyang"对应的mnt 和dentry
-                */
-                look_path->look_mnt = son_file_mnt;            // 执行 home
-                look_path->file_dentry = son_file_dentry_node;  //   /home/wangchongyang  file_dentry 指向home，下一次指向wangchongyang
-                look_path->look_dentry = son_file_dentry_node;  
-                printk(PT_RUN,"%s:%d,file_node_addr=%lx,YYYYYYYYYYlook_path->look_dentry.path_name=%s\n\r",__FUNCTION__,__LINE__,(unsigned long)file_node,look_path->look_dentry->file_name.path_name);
         }
-
+        /*
+            开始描述"/"对应的mnt 和dentry
+            然后切换到下一个目录分量对应的dentry 和mnt, 描述"home"对应的mnt 和dentry
+            继续切换到wangchongyang 目录分量，描述"wangchongyang"对应的mnt 和dentry
+        */
+        look_path->look_mnt = son_file_mnt;            // 执行 home
+        look_path->file_dentry = son_file_dentry_node;  // /home/wangchongyang file_dentry 指向home，下一次指向wangchongyang
+        look_path->look_dentry = son_file_dentry_node;
+        printk(PT_RUN,"%s:%d,file_node_addr=%lx,YYYYYYYYYYlook_path->look_dentry.path_name=%s\n\r",__FUNCTION__,__LINE__,(unsigned long)file_node,look_path->look_dentry->file_name.path_name);
     }
 }
 
@@ -828,8 +812,7 @@ int loop_split_path_component(char *path_name, lookup_path_t *look_path,int *err
 int real_lookup_path(char *mount_path, lookup_path_t *look_path)
 {
     int ret = -1;
-    int error_code;
-    ret = loop_split_path_component(mount_path,look_path,&error_code);
+    ret = loop_split_path_component(mount_path,look_path);
     if (ret < 0) {
         printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
         return ret;

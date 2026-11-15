@@ -55,30 +55,37 @@ static int may_open(lookup_path_t *look_path, int acc_mode,int flag)
     xmount_t *mnt = look_path->look_mnt;
     int ret = 0;
 
-
-	if (!file_node)
+	if (!file_node) {
 		return -ENOENT;
+	}
 
-	if (S_ISLNK(file_node->node_mode))
+	if (S_ISLNK(file_node->node_mode)) {
 		return -ELOOP;
+	}
 	
-	if (S_ISDIR(file_node->node_mode)&& (flag & FMODE_WRITE))
+	if (S_ISDIR(file_node->node_mode) && (acc_mode & FMODE_WRITE)) {
 		return -EISDIR;
+	}
 
 	if (S_ISFIFO(file_node->node_mode) || S_ISSOCK(file_node->node_mode)) {
 		flag &= ~O_TRUNC;
 	} else if (S_ISBLK(file_node->node_mode) || S_ISCHR(file_node->node_mode)) {
-		if (mnt->mnt_flags & MNT_NODEV)
+		if (mnt->mnt_flags & MNT_NODEV) {
 			return -EACCES;
+		}
 		flag &= ~O_TRUNC;
-	} else if (IS_RDONLY(file_node) && (flag & FMODE_WRITE))
+	} else if (IS_RDONLY(file_node) &&
+	           ((acc_mode & FMODE_WRITE) || (flag & O_TRUNC))) {
 		return -EROFS;
+	}
 
 	if (IS_APPEND(file_node)) {
-		if  ((flag & FMODE_WRITE) && !(flag & O_APPEND))
+		if ((acc_mode & FMODE_WRITE) && !(flag & O_APPEND)) {
 			return -EPERM;
-		if (flag & O_TRUNC)
+		}
+		if (flag & O_TRUNC) {
 			return -EPERM;
+		}
 	}
     /*
 	if (flag & O_NOATIME)
@@ -117,6 +124,11 @@ struct file *do_open_file(lookup_path_t *look, struct open_flags *op)
     new_file_ret->f_mode = op->acc_mode;
     printk(PT_RUN,"WWWWWWWWWW %s:%d,op->acc_mode=%x\n\r",__FUNCTION__,__LINE__,op->acc_mode);
     fnode = f_dentry_cache->file_node;
+    if (fnode == NULL) {
+        xos_unspinlock(&inode_lock);
+        xos_kfree(new_file_ret);
+        return NULL; /* 路径查找之后，设备节点可能已被注销。 */
+    }
     fnode->ref_count++;
     new_file_ret->f_dentry = f_dentry_cache;
     new_file_ret->f_ops = fnode->file_ops;
@@ -140,7 +152,9 @@ struct file *do_open_file(lookup_path_t *look, struct open_flags *op)
     return new_file_ret;
 
 cleanup:
-    
+    xos_spinlock(&inode_lock);
+    fnode->ref_count--;
+    xos_unspinlock(&inode_lock);
     new_file_ret->f_flags = 0;
     xos_kfree(new_file_ret);
 
@@ -184,7 +198,6 @@ int check_open_file( const char *pathname,lookup_path_t  *look_path,struct open_
     int fd;
     printk(PT_RUN,"check open start %s:%d\n\r",__FUNCTION__,__LINE__);
 
-    op->lookup_flags |= LOOKUP_FOLLOW;
     ret = resolve_path((char*)pathname, op->lookup_flags, look_path);
     if(ret < 0){
         printk(PT_DEBUG,"RETRETRETRET%s:%d\n\r",__FUNCTION__,__LINE__);
@@ -210,9 +223,8 @@ int check_open_file( const char *pathname,lookup_path_t  *look_path,struct open_
 
 int create_open_file( const char *pathname,lookup_path_t  *look_path,struct open_flags *op)
 {
-    int fd;
     int ret;
-    int mode = 0;
+    struct open_flags created_op;
     xinode *parent_node;
     xdentry *son_file_dentry;
     /*
@@ -230,21 +242,47 @@ int create_open_file( const char *pathname,lookup_path_t  *look_path,struct open
         ret = resolve_path((char*)pathname, op->lookup_flags, &look_path);
 
     */
-    op->lookup_flags |= LOOKUP_PARENT;
-    ret = resolve_path((char*)pathname, op->lookup_flags, look_path);
-    if(ret < 0){
+    /* 已有文件按普通 open 处理；O_EXCL 不跟随最后一个链接。 */
+    ret = resolve_path((char *)pathname,
+                       (op->open_flag & O_EXCL) ?
+                       (op->lookup_flags & ~LOOKUP_FOLLOW) : op->lookup_flags,
+                       look_path);
+    if (ret == 0) {
+        if (op->open_flag & O_EXCL) {
+            return -EEXIST;
+        }
+        ret = may_open(look_path, op->acc_mode, op->open_flag);
+        return ret < 0 ? ret : do_filp_open(look_path, op);
+    }
+    if (ret != -ENOENT) {
         return ret;
     }
-    printk(PT_DEBUG,"%s:%d,last_parent_name=%s\n\r",__FUNCTION__,__LINE__,look_path->look_dentry->file_name.path_name);
-    printk(PT_DEBUG,"%s:%d,inode_ops_addr=%lx\n\r",__FUNCTION__,__LINE__,(unsigned long)look_path->look_dentry->file_node->inode_ops);
-    /*最后一个分量父目录路径类型*/
-    if (look_path->path_type != PATH_NORMAL){
-        
-        ret = -EISDIR;
-        goto reslove_path_fail;
+    /* 创建普通文件不能接受末尾斜杠，也不能覆盖悬空符号链接。 */
+    if (pathname[strlen(pathname) - 1] == '/') {
+        return -EISDIR;
     }
 
+    ret = resolve_path((char *)pathname, LOOKUP_PARENT, look_path);
+    if (ret < 0) {
+        return ret;
+    }
+    /* 这里只检查末尾分量是否是普通文件名；目标是否存在由下面的 dentry 判断。 */
+    if (look_path->path_type != PATH_NORMAL) {
+        return -EISDIR;
+    }
     parent_node = look_path->look_dentry->file_node;
+    if (!parent_node) {
+        return -ENOENT;
+    }
+    if (!S_ISDIR(parent_node->node_mode)) {
+        return -ENOTDIR;
+    }
+    if (IS_RDONLY(parent_node)) {
+        return -EROFS;
+    }
+    if (!parent_node->inode_ops || !parent_node->inode_ops->create) {
+        return -EOPNOTSUPP;
+    }
     printk(PT_DEBUG,"%s:%d,parent_node_dentry=%s\n\r",__FUNCTION__,__LINE__,look_path->look_dentry->file_name.path_name);
 
     /*
@@ -254,12 +292,45 @@ int create_open_file( const char *pathname,lookup_path_t  *look_path,struct open
 
         look_path->flags  需要做进一步判断
     */
+    ret = lookup_dentry_in_pdentry(&look_path->last_path,
+                                   look_path->look_dentry, NULL,
+                                   &son_file_dentry);
+    if (ret < 0) {
+        return ret;
+    }
+    look_path->look_dentry = son_file_dentry;
+    if (son_file_dentry->file_node) {
+        return (op->open_flag & O_EXCL) ? -EEXIST : -ELOOP;
+    }
+    ret = parent_node->inode_ops->create(parent_node, son_file_dentry,
+                                          op->mode, look_path);
+    if (ret < 0) {
+        return ret;
+    }
+    if (!son_file_dentry->file_node) {
+        return -EIO;
+    }
+    ret = may_open(look_path, op->acc_mode, op->open_flag & ~O_TRUNC);
+    if (ret < 0) {
+        return ret;
+    }
+    /* 新建文件无需再截断；只改变本次 open 的选项，不污染调用方。 */
+    created_op = *op;
+    created_op.open_flag &= ~O_TRUNC;
+    /* 缓存目录项由父目录持有；这里未取得额外引用，不调用 dput。 */
+    return do_filp_open(look_path, &created_op);
+}
+
+#if 0
+int create_open_file( const char *pathname,lookup_path_t  *look_path,struct open
+
+         look_path->flags  需要做进一步判断
+     */
     look_path->flags &= ~LOOKUP_PARENT;
     son_file_dentry = lookup_dentry_in_pdentry(&look_path->last_path, look_path->look_dentry, NULL);
     if(!son_file_dentry){
         ret = -ENOMEM;
         goto lookup_fail;
-    }
     look_path->look_dentry = son_file_dentry;
     if (!son_file_dentry->file_node)
     {
@@ -275,13 +346,13 @@ int create_open_file( const char *pathname,lookup_path_t  *look_path,struct open
             if(ret){
                 goto  create_fail;
             }
-            
+
             op->open_flag &= ~O_TRUNC;
             ret = may_open(look_path, op->acc_mode,op->open_flag);
             if(!ret){
-            
+
                 do_filp_open(look_path,op);
-                
+
             }else{
                  goto  may_open_fail;
             }
@@ -296,10 +367,9 @@ int create_open_file( const char *pathname,lookup_path_t  *look_path,struct open
         if(fd < 0){
             goto do_filp_open_fail;
         }
-    }
     printk(PT_DEBUG,"%s:%d\n\r",__FUNCTION__,__LINE__);
     dput(son_file_dentry);
-    
+
 do_filp_open_fail:
 
 may_open_fail:
@@ -311,7 +381,7 @@ lookup_fail:
 reslove_path_fail:
     return fd;
 }
-
+#endif
 /*
     2024.12.26 21:37
     后续注释全部使用英文
@@ -368,25 +438,17 @@ reslove_path_fail:
 
 int vfs_open(int dfd, const char *pathname, struct open_flags *op)
 {
-    int fd = 0;
-
-    lookup_path_t  look_path;
+    lookup_path_t look_path = {0};
 
     if(!(op->open_flag & O_CREAT)){
         /*
             walk path only
         */
-        fd = check_open_file(pathname,&look_path,op);
-        if(fd){
-            return fd;
-        }
+        return check_open_file(pathname, &look_path, op);
 
     }else{
-         look_path.mode = 0;
-         fd = create_open_file(pathname, &look_path,op);
-         return fd;
+        return create_open_file(pathname, &look_path, op);
     }
-    return fd;
 }
 
 
