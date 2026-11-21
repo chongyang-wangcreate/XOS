@@ -150,3 +150,14 @@ void xos_ramdisk_exit(void)
     memset(&xos_ramdisk_disk, 0, sizeof(xos_ramdisk_disk));
     xos_ramdisk_is_ready = 0;
 }
+
+int xos_ramdisk_load_image(const void *image, uint32 image_size)
+{
+    if (!xos_ramdisk_is_ready || image == NULL || image_size == 0 ||
+        image_size > sizeof(xos_ramdisk_storage) ||
+        image_size % XOS_RAMDISK_SECTOR_SIZE != 0) {
+        return -EINVAL;
+    }
+    memcpy(xos_ramdisk_storage, image, image_size);
+    return 0;
+}

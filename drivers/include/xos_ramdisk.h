@@ -17,5 +17,6 @@
 
 int xos_ramdisk_init(void);
 void xos_ramdisk_exit(void);
+int xos_ramdisk_load_image(const void *image, uint32 image_size);
 
 #endif

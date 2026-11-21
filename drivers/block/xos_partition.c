@@ -809,14 +809,14 @@ int xos_partition_scan(xos_block_device_t *parent)
     }
     printk(PT_DEBUG,"%s:%d SCAN BEGIN\n",__FUNCTION__, __LINE__);
     ret = xos_gpt_scan(parent);
-    if (ret >= 0) {
+    if (ret != -ENOEXEC) {
         return ret;
     }
 
-    /* GPT not found or invalid, try MBR */
+    /* Only an absent signature permits fallback; preserve actual failures. */
     ret = xos_mbr_scan(parent);
-    if (ret < 0 && ret != -ENOEXEC) {
-        printk(PT_WARRING,
+    if (ret == -ENOEXEC) {
+        printk(PT_DEBUG,
                "partition_scan: no partition table found on %s\n",
                parent->name);
         return 0;
